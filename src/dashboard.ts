@@ -42,49 +42,80 @@ function plainText(text: string): string {
 	return text.replace(SGR_PATTERN, "");
 }
 
-function visibleWidth(text: string): number {
-	return [...plainText(text)].length;
+/**
+ * Terminal cell width for one code point. Full wcwidth is out of scope for a
+ * zero-dependency renderer; this covers the wide ranges that actually appear
+ * in greetings/logos/quotes (CJK, kana, Hangul, fullwidth forms, emoji).
+ * Combining marks are counted as width 1 — a known, documented simplification.
+ */
+function charCellWidth(cp: number): number {
+	if (cp < 0x1100) return 1;
+	if (
+		(cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+		(cp >= 0x2e80 && cp <= 0x303e) || // CJK radicals .. CJK symbols
+		(cp >= 0x3041 && cp <= 0x33ff) || // Hiragana .. CJK compatibility
+		(cp >= 0x3400 && cp <= 0x4dbf) || // CJK ext A
+		(cp >= 0x4e00 && cp <= 0x9fff) || // CJK unified ideographs
+		(cp >= 0xa000 && cp <= 0xa4cf) || // Yi syllables
+		(cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+		(cp >= 0xf900 && cp <= 0xfaff) || // CJK compatibility ideographs
+		(cp >= 0xfe30 && cp <= 0xfe4f) || // CJK compatibility forms
+		(cp >= 0xff00 && cp <= 0xff60) || // Fullwidth forms
+		(cp >= 0xffe0 && cp <= 0xffe6) || // Fullwidth signs
+		(cp >= 0x1f300 && cp <= 0x1faff) || // Pictographic emoji
+		(cp >= 0x20000 && cp <= 0x3fffd) // CJK ext B and beyond
+	) {
+		return 2;
+	}
+	return 1;
+}
+
+/** Visible terminal-cell width of a line after stripping SGR sequences. */
+export function visibleWidth(text: string): number {
+	let total = 0;
+	for (const char of plainText(text)) total += charCellWidth(char.codePointAt(0) ?? 0);
+	return total;
 }
 
 function padding(count: number): string {
 	return count > 0 ? " ".repeat(count) : "";
 }
 
+const ELLIPSIS_PLACEHOLDER = "…";
+
+/**
+ * Truncate to an exact visible cell width, preserving SGR runs so styled
+ * text keeps its color when it overflows.
+ */
 function truncateToWidth(text: string, width: number): string {
-	const stripped = plainText(text);
-	if ([...stripped].length <= width) return text;
+	if (visibleWidth(text) <= width) return text;
+	const maxCells = Math.max(0, width - 1); // room for the ellipsis
 	let out = "";
 	let used = 0;
-	for (const char of stripped) {
-		if (used >= width - 1) break;
+	let inEscape = false;
+	for (const char of text) {
+		if (inEscape) {
+			out += char;
+			if (char === "m") inEscape = false;
+			continue;
+		}
+		if (char === "\x1b") {
+			inEscape = true;
+			out += char;
+			continue;
+		}
+		const w = charCellWidth(char.codePointAt(0) ?? 0);
+		if (used + w > maxCells) break;
 		out += char;
-		used++;
+		used += w;
 	}
 	return `${out}${ELLIPSIS_PLACEHOLDER}`;
 }
 
-const ELLIPSIS_PLACEHOLDER = "…";
-
 /** Fit a (possibly styled) string to an exact visible width, preserving SGR runs. */
 function fitToWidth(text: string, width: number): string {
 	const visLen = visibleWidth(text);
-	if (visLen > width) {
-		const maxWidth = Math.max(0, width - [...ELLIPSIS_PLACEHOLDER].length);
-		let truncated = "";
-		let currentWidth = 0;
-		let inEscape = false;
-		for (const char of text) {
-			if (char === "\x1b") inEscape = true;
-			if (inEscape) {
-				truncated += char;
-				if (char === "m") inEscape = false;
-			} else if (currentWidth < maxWidth) {
-				truncated += char;
-				currentWidth++;
-			}
-		}
-		return `${truncated}${ELLIPSIS_PLACEHOLDER}`;
-	}
+	if (visLen > width) return truncateToWidth(text, width);
 	return text + padding(width - visLen);
 }
 
@@ -257,9 +288,22 @@ function computeGeometry(cfg: DashboardConfig, termWidth: number, hasRightBlocks
 	};
 }
 
+/**
+ * Pick a quote deterministically: `render()` runs on every TUI repaint, so
+ * per-render randomness would flicker between frames. Rotation is keyed on
+ * the UTC day index — every frame within a day shows the same entry, and the
+ * list cycles over consecutive days.
+ */
+function pickQuote(quote: string[]): string | undefined {
+	if (quote.length === 0) return undefined;
+	if (quote.length === 1) return quote[0];
+	const dayIndex = Math.floor(Date.now() / 86_400_000);
+	return quote[dayIndex % quote.length];
+}
+
 function buildQuoteLine(cfg: DashboardConfig, state: DashboardState, theme: DashboardTheme, width: number): string[] {
 	if (cfg.quote.length === 0) return [];
-	const picked = cfg.quote[Math.floor(Math.random() * cfg.quote.length)];
+	const picked = pickQuote(cfg.quote);
 	if (!picked) return [];
 	const text = expandTokens(picked, state);
 	return [` ${theme.fg("dim", `\x1b[3m${truncateToWidth(text, Math.max(1, width - 2))}\x1b[23m`)}`];
@@ -354,7 +398,7 @@ function assemblePlain(blocks: BlockLines[], contentWidth: number, theme: Dashbo
 		}
 		if (pendingRight) lines.push("");
 		pendingRight = true;
-		if (block.header !== undefined) lines.push(` ${theme.bold(theme.fg("accent", block.header))}`);
+		lines.push(` ${theme.bold(theme.fg("accent", block.header))}`);
 		for (const line of block.lines) lines.push(` ${applyTheme(line, theme)}`);
 	}
 	while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -379,7 +423,14 @@ export function renderDashboard(
 ): string[] {
 	const isBox = cfg.layout === "box";
 
-	const seen = new Set<string>(cfg.left);
+	const seen = new Set<string>();
+	// A name renders at most once per dashboard, whether duplicated within one
+	// column or repeated across both.
+	const leftList = cfg.left.filter(name => {
+		if (seen.has(name)) return false;
+		seen.add(name);
+		return true;
+	});
 	const rightList = cfg.right.filter(name => {
 		if (seen.has(name)) return false;
 		seen.add(name);
@@ -392,7 +443,7 @@ export function renderDashboard(
 		// Plain layout stacks every configured block full-width, left order then right.
 		const geometry = computeGeometry(cfg, termWidth, false);
 		if (!geometry) return [];
-		const stacked = [...buildAll(cfg.left), ...buildAll(rightList)];
+		const stacked = [...buildAll(leftList), ...buildAll(rightList)];
 		return [
 			...assemblePlain(stacked, geometry.boxWidth - 2, theme),
 			...buildQuoteLine(cfg, state, theme, geometry.boxWidth),
@@ -403,7 +454,7 @@ export function renderDashboard(
 	const rightBlocks = buildAll(rightList);
 	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0);
 	if (!geometry) return [];
-	const leftBlocks = buildAll(cfg.left);
+	const leftBlocks = buildAll(leftList);
 	const lines = assembleBox(leftBlocks, rightBlocks, geometry, cfg, state, theme);
 	return [
 		...lines,

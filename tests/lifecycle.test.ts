@@ -90,12 +90,41 @@ describe("lifecycle: inert rule", () => {
 		}
 	});
 
-	it("still leaves UI untouched when config has only unknown keys", async () => {
+	it("warns about unknown keys but still mounts nothing", async () => {
 		const project = scratchProject({ whatever: 1 });
 		try {
 			const h = boot({ headerMode: "noop", cwd: project.cwd });
 			await h.sessionStart();
 			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.notify.length, 1);
+			assert.ok(h.calls.notify[0]?.message.includes('unknown key "whatever"'));
+			assert.equal(h.calls.notify[0]?.type, "warning");
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("leaves the native header restored on a header-capable host when inert", async () => {
+		const project = scratchProject(undefined);
+		try {
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			await h.sessionStart();
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.ok(h.calls.setHeader.length >= 2); // probe sentinel + restore
+			assert.equal(h.calls.setHeader.at(-1)?.factory, undefined); // native back
+			assert.equal(h.calls.notify.length, 0); // nothing to warn about
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("keeps the additive widget off the header when replaceHeader is unset (Pi)", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			await h.sessionStart();
+			assert.ok(h.calls.setHeader.at(-1)?.factory === undefined, "probe must restore before widget mount");
+			assert.ok(h.calls.setWidget.some(c => c.key === WIDGET_KEY && c.content !== undefined));
 		} finally {
 			project.dispose();
 		}
@@ -162,10 +191,14 @@ describe("lifecycle: pi host routing", () => {
 			const lateCtx = makeMockCtx({ headerMode: "noop", version: undefined });
 			// The handler is already registered; invoke it again with the real ctx.
 			await early.api.handlerFor("session_start")({ reason: "startup" }, { ...lateCtx.ctx, cwd: project.cwd });
-			const hintCalls = 0;
+			const hintCalls = lateCtx.calls.notify.filter(n => n.message.includes("startup.quiet")).length;
 			assert.equal(hintCalls, 0); // no notify-based hint by design
-			const widget = lateCtx.calls.setWidget.at(-1) ?? early.calls.setWidget.at(-1);
-			assert.equal(widget?.key, WIDGET_KEY);
+			const widgetFactory = (lateCtx.calls.setWidget.at(-1) ?? early.calls.setWidget.at(-1))?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const rendered = widgetFactory?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(rendered.includes("Ahoy!"));
+			assert.ok(!rendered.includes("startup.quiet")); // no VERSION on Pi → no omp hint
 		} finally {
 			project.dispose();
 		}

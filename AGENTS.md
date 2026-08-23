@@ -21,13 +21,15 @@ Core contract (user-mandated, enforced by tests):
 | Module | Responsibility |
 |---|---|
 | `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `before_agent_start` / `session_shutdown`; owns mount state (`headerCapable`, `mountMode`, `visible`). |
-| `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` (null ⇒ inert), `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
+| `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` — `null` only when **no config file exists anywhere**; files that exist but carry nothing recognized return defaults with empty `explicitKeys` plus warnings. Also `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
 | `src/host.ts` | Host abstraction, failure-tolerant: `probeHeaderSupport(ui)` (behavioral capability probe), `snapshotInfo(ctx, api)`, `fetchBranch(api)`, `fetchRecentSessions(cwd, count)`, `detectAppName()`, constant `WIDGET_KEY = "omp-startup"`. |
 | `src/dashboard.ts` | Pure renderer, no host imports: `renderDashboard(cfg, state, theme, termWidth)`, `makeDashboardComponent(stateRef, cfgRef)` → `{factory, refresh}`. ANSI-safe width math, 5-stop diagonal gradient, box/plain assembly. |
 | `types.d.ts` | Ambient declarations for the used host-API subset (`OmpStartupExtensionAPI`, `ExtensionUiSubset`, …). Typecheck-only; consumed at runtime by nothing. |
 
 Data flow on `session_start`: guard `ctx.hasUI && ctx.mode === "tui"` → probe
-`setHeader` capability → `loadConfig`; if null → return before any mount (inert).
+`setHeader` capability (restoring the native header immediately after a
+positive probe) → `loadConfig`; if null or `explicitKeys.size === 0` → return
+before any mount (inert; warnings about the user's own files are still shown).
 Otherwise: surface warnings once via `ctx.ui.notify(…, "warning")`, snapshot info,
 fire-and-forget `void refreshAsync()` (git branch + recent sessions mutate
 `stateRef`, then `dash.refresh()` → captured `tui.requestRender()`), then route:

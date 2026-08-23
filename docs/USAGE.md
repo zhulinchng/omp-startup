@@ -114,7 +114,7 @@ Save as `.omp/dashboard.json` (omp projects), `.pi/dashboard.json`
 | `info` | string[] | `["{model}","{provider}"]` | token rows under the logo; `""` renders blank |
 | `shortcuts` | `[key,label][]` | native hints | pairs rendered under the “Tips” header |
 | `sessions` | number 0–12 | `4` | recent-session rows; `0` hides the block |
-| `quote` | string \| string[] | `[]` | random pick rendered dim/italic below the box |
+| `quote` | string \| string[] | `[]` | stable pick rendered dim/italic below the box; rotates through the list daily |
 | `dismiss` | boolean | `true` | hide after the first submitted prompt |
 | `command` | string | `"dashboard"` | slash-command name (letters/digits/`_`/`-`) |
 | `replaceHeader` | boolean | `false` | **Pi only**: replace the whole native header instead of adding a widget |

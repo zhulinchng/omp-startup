@@ -41,7 +41,17 @@ export function probeHeaderSupport(ui: ExtensionUiSubset): boolean {
 	} catch {
 		return false;
 	}
-	return invoked;
+	if (!invoked) return false;
+	// A header-capable host actually INSTALLED the sentinel, displacing the
+	// native header (Pi's setExtensionHeader swaps it into the container).
+	// Restore the built-in header immediately so probing leaves no trace —
+	// inert sessions and additive-widget mounts must keep the native header.
+	try {
+		ui.setHeader(undefined);
+	} catch {
+		// Restore failure must not break routing decisions.
+	}
+	return true;
 }
 
 /**

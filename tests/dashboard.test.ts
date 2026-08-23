@@ -6,8 +6,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { makeDashboardComponent, renderDashboard } from "../src/dashboard.ts";
-import type { DashboardState } from "../src/host.ts";
+import { makeDashboardComponent, renderDashboard, visibleWidth } from "../src/dashboard.ts";
 import { makeState, PLAIN_THEME, render, stripAll, stripAnsi } from "./helpers.ts";
 
 const STATE = makeState();
@@ -201,6 +200,72 @@ describe("dashboard: duplicate block names across columns", () => {
 		);
 		const flat = stripAll(dup).join("\n");
 		assert.equal(flat.split("for prompt actions").length - 1, 1); // exactly one copy
+	});
+});
+
+describe("dashboard: quote stability (regression: no per-render randomness)", () => {
+	it("picks the same quote on every repaint within a day", () => {
+		const multi = ["first quote", "second quote", "third quote"];
+		const a = render({ quote: multi }, STATE);
+		const b = render({ quote: multi }, STATE);
+		const lastOf = (lines: string[]) => stripAll(lines).at(-1) ?? "";
+		assert.ok(multi.some(q => lastOf(a).includes(q)));
+		assert.equal(lastOf(a), lastOf(b), "quote flickered between renders");
+	});
+
+	it("rotates deterministically with the UTC day index", () => {
+		const multi = ["alpha", "beta", "gamma", "delta", "epsilon"];
+		const lines = render({ quote: multi }, STATE);
+		const expected = multi[Math.floor(Date.now() / 86_400_000) % multi.length] ?? "";
+		assert.ok(stripAll(lines).at(-1)?.includes(expected));
+	});
+});
+
+describe("dashboard: wide-character geometry (regression: code-point widths)", () => {
+	it("keeps box rows uniform when the greeting contains CJK text", () => {
+		const lines = renderDashboard(
+			{ ...DEFAULT_CONFIG, left: ["greeting"], right: [], logo: "none", greeting: "欢迎回来 — welcome" },
+			makeState(),
+			PLAIN_THEME,
+			100,
+		);
+		const widths = new Set(stripAll(lines).map(l => visibleWidth(l)));
+		assert.equal(widths.size, 1, `ragged cells: ${[...widths].join(",")}`);
+	});
+
+	it("counts CJK characters as two terminal cells", () => {
+		assert.equal(visibleWidth("你好"), 4);
+		assert.equal(visibleWidth("abc"), 3);
+	});
+});
+
+describe("dashboard: styled truncation (regression: SGR loss)", () => {
+	it("keeps color codes when a themed line overflows and is truncated", () => {
+		const styledTheme: DashboardTheme = {
+			fg: (color, text) => `\x1b[${color === "dim" ? 2 : 36}m${text}\x1b[0m`,
+			bold: text => `\x1b[1m${text}\x1b[0m`,
+		};
+		const longGreeting = "x".repeat(80);
+		const lines = renderDashboard(
+			{ ...DEFAULT_CONFIG, left: ["greeting"], right: [], logo: "none", width: 30, greeting: longGreeting },
+			makeState(),
+			styledTheme,
+			30,
+		);
+		assert.ok(lines.length > 0);
+		// The overflowing greeting is truncated to the left column with an
+		// ellipsis — and must KEEP its color codes through that truncation.
+		const ellipsisLine = lines.find(l => stripAll([l])[0]?.includes("…"));
+		assert.ok(ellipsisLine, "expected a truncated (ellipsis) line");
+		assert.ok(/\x1b\[/.test(ellipsisLine), "truncation stripped SGR styling");
+		for (const line of lines) assert.ok(visibleWidth(line) <= 30, `overflow: ${stripAnsi(line)}`);
+	});
+});
+
+describe("dashboard: duplicate block names within one column", () => {
+	it("renders a repeated left-column block exactly once", () => {
+		const lines = render({ left: ["greeting", "greeting", "info"] as never }, makeState());
+		assert.equal(stripAll(lines).filter(l => l.includes("Welcome back!")).length, 1);
 	});
 });
 

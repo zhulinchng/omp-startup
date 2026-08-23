@@ -123,14 +123,21 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		headerCapable = probeHeaderSupport(ctx.ui);
 
 		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, homedir());
-		cfgRef.current = loaded ? loaded.cfg : DEFAULT_CONFIG;
+		cfgRef.current = loaded?.cfg ?? DEFAULT_CONFIG;
 
-		stateRef.current = snapshotInfo(ctx, api);
-		void refreshAsync();
-
+		// Warnings describe the user's own config files (broken JSON, unknown
+		// keys, invalid values) — surface them even when nothing is mountable.
 		for (const warning of loaded?.warnings ?? []) {
 			ctx.ui.notify(`omp-startup: ${warning}`, "warning");
 		}
+
+		// Inert rule: no config files anywhere, or none of them carry a
+		// recognized key → leave every native surface untouched. (The probe
+		// above already restored any header it touched.)
+		if (!loaded || loaded.explicitKeys.size === 0) return;
+
+		stateRef.current = snapshotInfo(ctx, api);
+		void refreshAsync();
 
 		// Config may rename the command; try to register an alias (best effort —
 		// late registration is not guaranteed on every host; /dashboard remains).
@@ -145,8 +152,6 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			}
 		}
 
-		// Inert rule: no config anywhere → leave every native surface untouched.
-		if (!loaded) return;
 		mount(ctx);
 	});
 

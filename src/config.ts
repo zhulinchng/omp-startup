@@ -100,21 +100,25 @@ export interface TokenSnapshot {
 
 interface RawLayer {
 	file: string;
-	data: Record<string, unknown>;
+	/** Undefined when the file does not exist; {} when it exists but is unreadable. */
+	data: Record<string, unknown> | undefined;
 }
 
-function readLayer(file: string, warnings: string[]): RawLayer | undefined {
-	if (!existsSync(file)) return undefined;
+function readLayer(file: string, warnings: string[]): RawLayer {
+	if (!existsSync(file)) return { file, data: undefined };
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(file, "utf8"));
 	} catch (error) {
+		// The file exists but is unreadable: keep it in the layer set (so
+		// loadConfig reports warnings rather than claiming full inertness)
+		// while contributing no keys.
 		warnings.push(`${file}: invalid JSON (${String(error)})`);
-		return undefined;
+		return { file, data: {} };
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		warnings.push(`${file}: expected a JSON object at the top level`);
-		return undefined;
+		return { file, data: {} };
 	}
 	return { file, data: parsed as Record<string, unknown> };
 }
@@ -227,19 +231,24 @@ function coerceCommand(file: string, value: unknown, fallback: string, warnings:
 /**
  * Load and merge configuration layers.
  *
- * Returns null when nothing is configured anywhere — the caller must then leave
- * every native UI surface untouched.
+ * Returns null only when NO config file exists anywhere — the caller must then
+ * leave every native UI surface untouched. When files exist but carry nothing
+ * recognized (empty object, unknown keys, unreadable JSON), the result has an
+ * empty `explicitKeys` and the collected `warnings`; callers treat that as
+ * inert for mounting but may surface the warnings.
  */
 export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 	const warnings: string[] = [];
 
 	// Project layer: first existing file wins so .omp and .pi users don't double-apply.
 	const projectFiles = [join(cwd, ".omp", "dashboard.json"), join(cwd, ".pi", "dashboard.json")];
-	const project = projectFiles.map(file => readLayer(file, warnings)).find(layer => layer !== undefined);
+	const project = projectFiles.map(file => readLayer(file, warnings)).find(layer => layer.data !== undefined);
 
 	const user = readLayer(join(home, ".config", "dashboard", "config.json"), warnings);
 
-	const layers = [user, project].filter((layer): layer is RawLayer => layer !== undefined);
+	const layers = [user, project].filter((layer): layer is RawLayer & { data: Record<string, unknown> } =>
+		layer !== undefined && layer.data !== undefined,
+	);
 	if (layers.length === 0) return null;
 
 	// Dynamic runtime keys from JSON files → Map with source-file provenance.
@@ -255,7 +264,6 @@ export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 			explicitKeys.add(key);
 		}
 	}
-	if (explicitKeys.size === 0) return null;
 
 	function pick<K extends keyof DashboardConfig>(key: K): DashboardConfig[K] {
 		const entry = merged.get(key);

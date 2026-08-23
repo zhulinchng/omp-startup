@@ -89,8 +89,14 @@ const sentinel = (_tui, _theme) => {
     return { render: () => [] };
 };
 try { ui.setHeader(sentinel); } catch { return false; }
-return invoked;
+if (!invoked) return false;
+ui.setHeader(undefined);     // restore: Pi actually MOUNTED the sentinel
+return true;
 ```
+
+The trailing restore call matters: on a header-capable host the sentinel
+displaced the built-in header, so probing must put it back or every
+inert/additive session would silently lose the native header.
 
 Setting the flag inside the factory call (not inside `render()`) matters:
 Pi's `setExtensionHeader` invokes the factory but defers painting. The probe
@@ -154,9 +160,13 @@ sequenceDiagram
     S->>S: snapshotInfo writes stateRef
     S->>X: void refreshAsync non-blocking
     S->>R: mount via setWidget or setHeader
-    X->>X: git branch via api.exec
-    X->>R: dash.refresh triggers tui.requestRender
-```
+Layers, later winning per key: built-in defaults ← user
+`~/.config/dashboard/config.json` ← project `<cwd>/.omp/dashboard.json`
+(falling back to `.pi/`). Only keys present in a file enter `explicitKeys`.
+`loadConfig` returns `null` only when **no config file exists anywhere**; when
+files exist but carry nothing recognized (empty object, unknown keys, broken
+JSON) it returns defaults with an empty `explicitKeys` plus the collected
+warnings — the lifecycle mounts nothing but still reports what is wrong.
 
 ## 5. Configuration pipeline
 
@@ -171,7 +181,7 @@ flowchart LR
     U["user layer ~/.config/dashboard/config.json"] --> M
     P["project layer .omp or .pi dashboard.json"] --> M
     M --> Q{"any recognized key?"}
-    Q -- no --> N["null = plugin inert"]
+    Q -- no --> N["no explicit keys = plugin mounts nothing (warnings still reported)"]
     Q -- yes --> V["coerce each present key"]
     V --> O["cfg + explicitKeys + warnings"]
 ```

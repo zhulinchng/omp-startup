@@ -72,10 +72,15 @@ withTempHome(undefined, (cwd, home) => {
 	check("no config files → null", loadConfig(cwd, home) === null);
 });
 withTempHome({}, (cwd, home) => {
-	check("empty config object → null", loadConfig(cwd, home) === null);
+	const loaded = loadConfig(cwd, home);
+	check("empty config object → defaults, no explicit keys", loaded !== null && loaded.explicitKeys.size === 0 && loaded.warnings.length === 0);
 });
 withTempHome({ bogusKey: 1 }, (cwd, home) => {
-	check("only unknown keys → null", loadConfig(cwd, home) === null);
+	const loaded = loadConfig(cwd, home);
+	check(
+		"only unknown keys → warning surfaced, nothing explicit",
+		loaded !== null && loaded.explicitKeys.size === 0 && loaded.warnings.some(w => w.includes("unknown key")),
+	);
 });
 withTempHome({ greeting: "Ahoy!" }, (cwd, home) => {
 	const loaded = loadConfig(cwd, home);
@@ -164,6 +169,15 @@ check(
 	!noSessions.some(line => line.includes("Recent sessions")),
 );
 
+
+// Quote selection must be repaint-stable (regression: per-render randomness).
+{
+	const multi = ["alpha", "beta", "gamma", "delta"];
+	const a = snapshot({ quote: multi }, STATE);
+	const b = snapshot({ quote: multi }, STATE);
+	const lastOf = (lines: string[]) => PLAIN(lines).at(-1) ?? "";
+	check("quote stable across repaints", lastOf(a) === lastOf(b) && multi.some(q => lastOf(a).includes(q)));
+}
 const quoted = snapshot({ quote: ["stay curious"] }, STATE);
 check(
 	"quote renders below box",

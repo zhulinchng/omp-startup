@@ -20,31 +20,55 @@ describe("config: inert rule", () => {
 		}
 	});
 
-	it("returns null when the project file is an empty object", () => {
+	it("returns defaults with empty explicitKeys when the project file is an empty object", () => {
 		const fx = withDirs({ project: {} });
 		try {
-			assert.equal(loadConfig(fx.cwd, fx.home), null);
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.equal(loaded.explicitKeys.size, 0);
+			assert.deepEqual(loaded.cfg, DEFAULT_CONFIG);
+			assert.deepEqual(loaded.warnings, []);
 		} finally {
 			fx.dispose();
 		}
 	});
 
-	it("returns null when only unknown keys are present", () => {
+	it("reports unknown keys while keeping explicitKeys empty", () => {
 		const fx = withDirs({ project: { bogus: 1, another: "x" } });
 		try {
 			const loaded = loadConfig(fx.cwd, fx.home);
-			assert.equal(loaded, null);
+			assert.ok(loaded);
+			assert.equal(loaded.explicitKeys.size, 0);
+			assert.equal(loaded.warnings.length, 2);
+			assert.ok(loaded.warnings.every(w => w.includes("unknown key")));
 		} finally {
 			fx.dispose();
 		}
 	});
 
-	it("returns null when user file carries no recognized keys", () => {
+	it("reports unknown keys from a user file with empty explicitKeys", () => {
 		const fx = withDirs({ user: { nope: true } });
 		try {
-			assert.equal(loadConfig(fx.cwd, fx.home), null);
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.equal(loaded.explicitKeys.size, 0);
+			assert.equal(loaded.warnings.length, 1);
 		} finally {
 			fx.dispose();
+		}
+	});
+
+	it("surfaces broken JSON as a warning instead of collapsing to null", () => {
+		const fixture = withDirs({});
+		try {
+			mkdirSync(join(fixture.cwd, ".omp"), { recursive: true });
+			writeFileSync(join(fixture.cwd, ".omp", "dashboard.json"), "{ not json");
+			const loaded = loadConfig(fixture.cwd, fixture.home);
+			assert.ok(loaded);
+			assert.equal(loaded.explicitKeys.size, 0);
+			assert.ok(loaded.warnings.some(w => w.includes("invalid JSON")));
+		} finally {
+			fixture.dispose();
 		}
 	});
 });
@@ -275,17 +299,6 @@ describe("config: coercion and warnings", () => {
 		}
 	});
 
-	it("reports invalid JSON without crashing and stays inert", () => {
-		const fixture = withDirs({});
-		try {
-			mkdirSync(join(fixture.cwd, ".omp"), { recursive: true });
-			writeFileSync(join(fixture.cwd, ".omp", "dashboard.json"), "{ not json");
-			const loaded = loadConfig(fixture.cwd, fixture.home);
-			assert.equal(loaded, null); // invalid JSON contributes no explicit keys
-		} finally {
-			fixture.dispose();
-		}
-	});
 });
 
 describe("expandTokens", () => {

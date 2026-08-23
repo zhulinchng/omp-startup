@@ -31,6 +31,39 @@ describe("probeHeaderSupport", () => {
 		const ui = { setHeader() { throw new Error("boom"); }, setWidget() {}, notify() {} };
 		assert.equal(probeHeaderSupport(ui as never), false);
 	});
+
+	it("restores the native header after a positive probe (no trace left on Pi)", () => {
+		const calls: Array<{ factory: unknown }> = [];
+		const ui = {
+			setHeader(factory: unknown) {
+				calls.push({ factory });
+				if (factory !== undefined) {
+					// Pi mounts the sentinel in place of the built-in header.
+					(factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
+				}
+			},
+			setWidget() {},
+			notify() {},
+		};
+		assert.equal(probeHeaderSupport(ui as never), true);
+		assert.equal(calls.length, 2);
+		assert.notEqual(calls[0]?.factory, undefined); // sentinel install
+		assert.equal(calls[1]?.factory, undefined); // immediate restore
+	});
+
+	it("makes no restore call when the host never invokes the factory", () => {
+		const factories: unknown[] = [];
+		const ui = {
+			setHeader(factory: unknown) {
+				factories.push(factory);
+			},
+			setWidget() {},
+			notify() {},
+		};
+		assert.equal(probeHeaderSupport(ui as never), false);
+		assert.equal(factories.length, 1); // sentinel handed over, ignored by omp
+		assert.notEqual(factories[0], undefined); // no undefined-restore follows
+	});
 });
 
 describe("snapshotInfo", () => {
