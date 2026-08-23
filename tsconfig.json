@@ -1,0 +1,15 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": false,
+		"skipLibCheck": true,
+		"types": ["node"]
+	},
+	"include": ["types.d.ts", "src/**/*.ts", "scripts/**/*.ts"]
+}
