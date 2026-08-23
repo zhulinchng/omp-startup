@@ -12,7 +12,8 @@
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.ts"
+		"smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.ts",
+		"test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",

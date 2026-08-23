@@ -30,12 +30,12 @@ export interface DashboardState extends TokenSnapshot {
  */
 export function probeHeaderSupport(ui: ExtensionUiSubset): boolean {
 	let invoked = false;
-	const sentinel = (_tui: DashboardTUI, _theme: DashboardTheme): DashboardComponent => ({
-		render(): string[] {
-			invoked = true;
-			return [];
-		},
-	});
+	const sentinel = (_tui: DashboardTUI, _theme: DashboardTheme): DashboardComponent => {
+		// Flag at FACTORY-CALL time: upstream Pi invokes the factory to obtain
+		// the component but renders only on the next paint.
+		invoked = true;
+		return { render: () => [] };
+	};
 	try {
 		ui.setHeader(sentinel);
 	} catch {
@@ -44,9 +44,14 @@ export function probeHeaderSupport(ui: ExtensionUiSubset): boolean {
 	return invoked;
 }
 
-function detectAppName(): string {
+/**
+ * Binary-name heuristic for the `{app}` token. Returns "omp"/"pi" when the
+ * running executable matches, else "". Exported with an injectable path for
+ * tests (process.execPath cannot be reassigned reliably).
+ */
+export function detectAppName(execPath: string = process.execPath): string {
 	try {
-		const binary = basename(process.execPath);
+		const binary = basename(execPath);
 		return binary === "omp" || binary === "pi" ? binary : "";
 	} catch {
 		return "";
@@ -112,18 +117,26 @@ async function listViaHostPackage(cwd: string, count: number): Promise<SessionRo
 	// Fallback: plain listing mapped defensively.
 	if (typeof sessionManager?.list === "function") {
 		const infos = await sessionManager.list(cwd);
-		return infos.slice(0, count).map(info => {
-			// omp names sessions `title`, upstream Pi `name`.
-			const named = info as { title?: string; name?: string };
-			return {
-				name: named.name ?? named.title ?? basename(info.path),
-				timeAgo: formatTimeAgo(info.modified),
-			};
-		});
+		return mapSessionInfos(infos).slice(0, count);
 	}
 
 	return [];
 }
+
+/**
+ * Map either host's session-listing rows to dashboard rows.
+ * omp names sessions `title`, upstream Pi `name`; empty strings fall through
+ * to the file basename. Exported for tests.
+ */
+export function mapSessionInfos(
+	infos: Array<{ title?: string | undefined; name?: string | undefined; path: string; modified: Date }>,
+): SessionRow[] {
+	return infos.map(info => ({
+		name: info.name || info.title || basename(info.path),
+		timeAgo: formatTimeAgo(info.modified),
+	}));
+}
+
 
 /**
  * Recent sessions for the sessions block. Any failure — package absent,

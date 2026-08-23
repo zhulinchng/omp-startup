@@ -2,87 +2,60 @@
 
 A customizable welcome/startup dashboard for [Oh My Pi (omp)](https://github.com/can1357/oh-my-pi) and upstream [Pi](https://github.com/earendil-works/pi) — the startup.nvim / snacks.dashboard of coding agents.
 
-**Core contract:** the plugin is **inert until configured**. With no `dashboard.json` anywhere, both hosts behave exactly as without it. Once you configure *anything*, only what you configured changes; every other element keeps its native look (the default template is a replica of omp's built-in welcome box). The plugin never writes harness settings — it only *advises*.
+**Core contract:** inert until configured. With no `dashboard.json` anywhere,
+both hosts behave exactly as without this plugin. Once you configure
+*anything*, only what you configured changes — every other element keeps its
+native look, because the defaults replicate omp's built-in welcome box. The
+plugin never writes harness settings.
 
-## Install
-
-The repo ships a dual-host manifest; discovery works from any standard extension location.
+## Quick start
 
 ```sh
-# user-level (both hosts), pick one:
-ln -s /path/to/omp-startup ~/.omp/agent/extensions/omp-startup
-ln -s /path/to/omp-startup ~/.pi/extensions/omp-startup
-
-# or project-level:
-mkdir -p .omp/extensions && ln -s /path/to/omp-startup .omp/extensions/omp-startup
+# pick a location per host (symlink tracks your checkout):
+ln -s /path/to/omp-startup ~/.omp/agent/extensions/omp-startup   # omp, user-level
+ln -s /path/to/omp-startup ~/.pi/agent/extensions/omp-startup    # Pi, user-level
 ```
 
-Or clone directly into the extensions directory. No build step and no runtime dependencies: hosts load the TypeScript sources as-is. (`npm install` is only needed to run `npm run typecheck` / `npm run smoke` yourself.)
+Configure by dropping a JSON file:
 
-## Configure
-
-Two layers, later wins per key:
+```json
+{ "greeting": "Ahoy, {user}!", "info": ["{model} · {provider}", "{branch} | {dir}"] }
+```
 
 | Layer | File |
 |---|---|
 | Project | `<cwd>/.omp/dashboard.json` or `<cwd>/.pi/dashboard.json` (first that exists) |
 | User | `~/.config/dashboard/config.json` |
 
-If neither file exists — or they contain no recognized keys — the plugin does nothing. Example:
-
-```json
-{
-  "greeting": "Ahoy, {user}!",
-  "info": ["{model} · {provider}", "{branch} | {dir}", "{date} {time}"],
-  "quote": ["Ship small, ship often."]
-}
-```
-
-### Options
-
-| Key | Default | Meaning |
-|---|---|---|
-| `layout` | `"box"` | `"box"` (native-style bordered two-column) or `"plain"` (stacked, borderless) |
-| `title` | `"{app} v{version}"` | Label embedded in the top border; `""` removes it |
-| `width` | `100` | Max box width in columns (20–500) |
-| `logo` | `"pi"` | `"pi"` (native π art) · `"none"` · custom `string[]` ASCII art |
-| `gradient` | `true` | Diagonal multi-stop truecolor gradient on the logo |
-| `greeting` | `"Welcome back!"` | Left-column headline |
-| `left` | `["greeting","blank","logo","blank","info"]` | Block order (left column / plain layout) |
-| `right` | `["shortcuts","sessions"]` | Block order (right column, box layout only) |
-| `info` | `["{model}","{provider}"]` | Token rows under the logo; `""` renders blank |
-| `shortcuts` | native hints | `[key, label]` pairs under the "Tips" header |
-| `sessions` | `4` | Recent-session rows; `0` hides the block |
-| `quote` | `[]` | Random pick rendered dim/italic below the box |
-| `dismiss` | `true` | Hide after the first submitted prompt |
-| `command` | `"dashboard"` | Slash-command name for manual toggle |
-| `replaceHeader` | `false` | Pi only: replace the whole native header instead of adding a widget |
-
-Block names: `greeting`, `logo`, `blank`, `info`, `shortcuts`, `sessions`.
-
-### Tokens
-
-`{user}` `{cwd}` `{dir}` `{model}` `{provider}` `{version}` `{branch}` `{app}` `{date}` `{time}` — usable in `greeting`, `title`, `info`, and `quote`. Unknown tokens pass through untouched.
+`/dashboard` toggles it at any time. On first submitted prompt it hides
+(`"dismiss": true`). Full option list, tokens, recipes, troubleshooting:
+**[docs/USAGE.md](docs/USAGE.md)**.
 
 ## Host behavior
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | widget above the editor (replica base) | Untouched unless you set `startup.quiet=true`; the plugin suggests this once per session because its widget stacks over the built-in box |
-| Pi | additive widget above the editor | Header stays; with `replaceHeader:true` the dashboard replaces it (dismiss restores) |
+| omp | replica widget above the editor | untouched unless you set `startup.quiet: true`; while stacked, the widget shows a one-line hint pointing there |
+| Pi | additive widget above the editor | native header stays; `replaceHeader: true` swaps it (dismiss restores) |
 
-`/dashboard` toggles the dashboard at any time, config or not (unconfigured → native-equivalent defaults).
+Routing is decided at runtime by probing whether `setHeader` actually works —
+no version sniffing; if either host changes, the plugin adapts.
 
-### Known deviations from pixel-perfect native parity
+## Documentation
 
-- The host's random tip line below the box and live-keybinding hint labels are host internals not exposed to plugins; the shortcuts block mirrors their content statically.
-- LSP-server rows are not available via public APIs.
-- The gradient renders the resting frame only (no intro sweep).
+- **[docs/USAGE.md](docs/USAGE.md)** — install paths, full config reference,
+  token table, recipes per layout, host behavior matrix, troubleshooting.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module map, capability
+  probe design, lifecycle state machine, renderer pipeline, compatibility
+  notes, and the live-host verification log.
 
-## Verify
+## Development
 
 ```sh
-npm install
-npm run typecheck
-npm run smoke
+npm install         # dev-only tooling
+npm run typecheck   # strict tsc --noEmit (src + scripts + tests)
+npm run smoke       # render/probe/token assertions + sample boxes
+npm test            # 85-assertion suite on node:test
 ```
+
+Zero runtime dependencies; hosts load the TypeScript sources as-is.

@@ -143,7 +143,6 @@ function paintGradient(lines: string[]): string[] {
 // ---------------------------------------------------------------------------
 
 interface BlockLines {
-	rightColumn: boolean;
 	header?: string;
 	lines: string[];
 }
@@ -157,13 +156,13 @@ function resolveLogoArt(cfg: DashboardConfig): string[] {
 function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): BlockLines | undefined {
 	switch (name) {
 		case "greeting":
-			return { rightColumn: false, lines: [expandTokens(cfg.greeting, state)] };
+			return { lines: [expandTokens(cfg.greeting, state)] };
 		case "blank":
-			return { rightColumn: false, lines: [""] };
+			return { lines: [""] };
 		case "logo": {
 			const art = resolveLogoArt(cfg);
 			if (art.length === 0) return undefined;
-			return { rightColumn: false, lines: art };
+			return { lines: art };
 		}
 		case "info": {
 			if (cfg.info.length === 0) return undefined;
@@ -173,14 +172,14 @@ function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): 
 				const color = index % 2 === 0 ? "muted" : "borderMuted";
 				return text === "" ? "" : `${MARKER_OPEN}${color}${MARKER_CLOSE}${text}`;
 			});
-			return { rightColumn: false, lines: rows };
+			return { lines: rows };
 		}
 		case "shortcuts": {
 			if (cfg.shortcuts.length === 0) return undefined;
 			const rows = cfg.shortcuts.map(
 				hint => `${MARKER_OPEN}dim${MARKER_CLOSE}${hint.key}${MARKER_OPEN}muted${MARKER_CLOSE} ${hint.label}`,
 			);
-			return { rightColumn: true, header: "Tips", lines: rows };
+			return { header: "Tips", lines: rows };
 		}
 		case "sessions": {
 			if (cfg.sessions <= 0) return undefined;
@@ -196,7 +195,7 @@ function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): 
 			}
 			// Pad to the fixed slot count so box height doesn't depend on session count.
 			while (rows.length < cfg.sessions) rows.push("");
-			return { rightColumn: true, header: "Recent sessions", lines: rows };
+			return { header: "Recent sessions", lines: rows };
 		}
 		default:
 			return undefined;
@@ -349,7 +348,7 @@ function assemblePlain(blocks: BlockLines[], contentWidth: number, theme: Dashbo
 	const lines: string[] = [];
 	let pendingRight = false;
 	for (const block of blocks) {
-		if (!block.rightColumn) {
+		if (block.header === undefined) {
 			for (const line of block.lines) lines.push(centerText(applyTheme(line, theme), contentWidth));
 			continue;
 		}
@@ -378,23 +377,22 @@ export function renderDashboard(
 	theme: DashboardTheme,
 	termWidth: number,
 ): string[] {
-	const leftNames = new Set<string>(cfg.left);
 	const isBox = cfg.layout === "box";
-	const buildAll = (names: string[]) =>
-		names
-			.filter(name => !leftNames.has(name))
-			.map(name => buildBlock(name, cfg, state))
-			.filter((block): block is BlockLines => block !== undefined);
-	const rightBlocks = isBox ? buildAll(cfg.right).filter(block => block.rightColumn) : [];
 
-	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0);
-	if (!geometry) return [];
+	const seen = new Set<string>(cfg.left);
+	const rightList = cfg.right.filter(name => {
+		if (seen.has(name)) return false;
+		seen.add(name);
+		return true;
+	});
+	const buildAll = (names: string[]) =>
+		names.map(name => buildBlock(name, cfg, state)).filter((block): block is BlockLines => block !== undefined);
 
 	if (!isBox) {
 		// Plain layout stacks every configured block full-width, left order then right.
-		const stacked = [...cfg.left.map(name => buildBlock(name, cfg, state)), ...buildAll(cfg.right)].filter(
-			(block): block is BlockLines => block !== undefined,
-		);
+		const geometry = computeGeometry(cfg, termWidth, false);
+		if (!geometry) return [];
+		const stacked = [...buildAll(cfg.left), ...buildAll(rightList)];
 		return [
 			...assemblePlain(stacked, geometry.boxWidth - 2, theme),
 			...buildQuoteLine(cfg, state, theme, geometry.boxWidth),
@@ -402,13 +400,16 @@ export function renderDashboard(
 		];
 	}
 
-	const leftBlocks = cfg.left
-		.map(name => buildBlock(name, cfg, state))
-		.filter((block): block is BlockLines => block !== undefined && !block.rightColumn);
-
+	const rightBlocks = buildAll(rightList);
+	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0);
+	if (!geometry) return [];
+	const leftBlocks = buildAll(cfg.left);
 	const lines = assembleBox(leftBlocks, rightBlocks, geometry, cfg, state, theme);
-
-	return [...lines, ...buildQuoteLine(cfg, state, theme, geometry.boxWidth), ...hintLine(state, theme, geometry.boxWidth)];
+	return [
+		...lines,
+		...buildQuoteLine(cfg, state, theme, geometry.boxWidth),
+		...hintLine(state, theme, geometry.boxWidth),
+	];
 }
 
 export interface DashboardComponentHandle {
