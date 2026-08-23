@@ -25,10 +25,11 @@ Core product contract, enforced in code and tests:
 2. **Unconfigured elements keep native defaults** — `DEFAULT_CONFIG` mirrors
    the native omp `WelcomeComponent`; only explicitly configured keys change
    the render.
-3. **The plugin writes no harness settings** — except one explicit opt-in:
-   `hideNativeWelcome: true` flips `startup.quiet` via the host SDK while the
-   dashboard is mounted on omp, and restores the captured previous value on
-   `session_shutdown`.
+3. **The plugin writes no harness settings** — except the welcome takeover on
+   omp: with `replaceNativeWelcome: true` (the default) it flips `startup.quiet`
+   via the host SDK while the dashboard is mounted and restores the captured
+   previous value when the dashboard hides or at `session_shutdown`. Setting
+   `replaceNativeWelcome: false` makes every code path read-only.
 
 ## 2. Module map
 
@@ -120,20 +121,21 @@ flowchart TD
     C --> D["loadConfig(cwd, home)"]
     D --> E{"loaded != null?"}
     E -- no --> Z2["INERT: nothing mounted"]
-    E -- yes --> F{"headerCapable && cfg.replaceHeader"}
-    F -- yes --> G["ui.setHeader(dashboard)<br/>(full takeover, opt-in)"]
-    F -- no --> H["ui.setWidget('omp-startup', …, aboveEditor)"]
-    H --> I{"!headerCapable && VERSION present?<br/>(omp-family)"}
-    I -- "yes && hideNativeWelcome" --> J2["engageQuiet(): set startup.quiet=true<br/>via host settings (previous value latched)"]
-    I -- "yes && !hideNativeWelcome" --> J["embed quiet-setting hint in widget"]
+    E -- yes --> F{"cfg.replaceNativeWelcome?<br/>(default true)"}
+    F -- "no" --> Z3["NOTHING MOUNTED at startup:<br/>native welcome untouched;<br/>/dashboard mounts the widget on demand"]
+    F -- yes --> G{"headerCapable?"}
+    G -- yes --> H2["ui.setHeader(dashboard)<br/>in-place header replacement<br/>(dismiss restores)"]
+    G -- no --> H["ui.setWidget('omp-startup', …, aboveEditor)"]
+    H --> I{"omp-family host?<br/>(!headerCapable && VERSION present)"}
+    I -- yes --> J2["engageQuiet(): set startup.quiet=true<br/>via host settings (previous value latched)"]
     I -- no --> K["no hint"]
 ```
 
 ## 4. Lifecycle and state machine
 
 Per-session state lives in the factory closure: `headerCapable`, `mountMode`
-(`"header" | "widget" | null`), `visible`, and `quietLatch` (the opt-in
-`hideNativeWelcome` capture, see below).
+(`"header" | "widget" | null`), `visible`, and `quietLatch` (the
+`replaceNativeWelcome` capture, see below).
 
 ```mermaid
 stateDiagram-v2
@@ -168,12 +170,14 @@ sequenceDiagram
     S->>R: mount via setWidget or setHeader
 ```
 
-### Opt-in quiet takeover (omp, `hideNativeWelcome: true`)
+### Welcome takeover (omp, default via `replaceNativeWelcome`)
 
-`engageQuiet()` fires (detached) right after the widget mounts and resolves
-asynchronously, so a dismissal or toggle during the host-package import simply
-cancels. State lives in `quietLatch = { previous, wrote }`, one capture per
-engagement:
+On omp-family hosts the widget route cannot reach the transcript stream, so
+takeover means suppression: `engageQuiet()` fires (detached) right after the
+widget mounts and resolves asynchronously, so a dismissal or toggle during the
+host-package import simply cancels. `replaceNativeWelcome: false` never
+reaches this path. State lives in `quietLatch = { previous, wrote }`, one
+capture per engagement:
 
 - `previous === true` → nothing is ever written and release has nothing to
   restore (avoids rewriting a user config that already said `quiet: true`).
@@ -262,24 +266,26 @@ Documented deliberately; none affect the inert rule.
 4. On hosts exposing neither `{app}` nor `{version}` (upstream Pi today), the
    default title degenerates to a lone "v"; the renderer skips it entirely in
    that case.
-5. Installed Pi 0.84.x emits `session_start` before its header exists, so
-   `replaceHeader` cannot engage there — the additive widget route runs
-   instead. Verified empirically; newer builds where the header exists first
-   will flip the probe automatically.
+5. Installed Pi 0.84.x emits `session_start` before its header exists, so the
+   in-place header replacement cannot engage there — the probe fails and the
+   widget route runs instead (still with quiet takeover on omp only). Verified
+   empirically; newer builds where the header exists first flip the probe
+   automatically.
 
 ## 8. Verification strategy
 
 | Layer | Mechanism |
 |---|---|
-| Unit | `node --test tests/*.test.ts` — 85 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, dismiss/toggle/shutdown hygiene |
-| Smoke | `scripts/smoke.ts` — 35 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info) |
+| Unit | `node --test tests/*.test.ts` — 103 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, dismiss/toggle/shutdown hygiene |
+| Smoke | `scripts/smoke.ts` — 39 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, settings seam) |
 | Types | `tsc --noEmit` strict, including `tests/` |
-| Live | PTY-driven omp 18.0.1 and pi 0.84.2 sessions (inert frame, configured frame, prompt-dismissal, `/dashboard` re-show, hint visibility) |
+| Live | PTY-driven omp 18.0.3 sessions (configured frame with quiet takeover, prompt-dismissal restore, `/dashboard` re-show, opted-out manual show) |
 
 Live results recorded for the shipped build:
 
-- omp: stock welcome untouched when unconfigured; replica widget with
-  `Ahoy!` + advisory hint when configured; dismissed after first prompt;
-  `/dashboard` restored it; recent-sessions rows populated from the host API.
-- pi: additive widget above the editor, native chrome untouched, no
-  omp-specific hint, dismissal and `/dashboard` identical.
+- omp: stock welcome untouched when unconfigured; with config the dashboard
+  engages quiet (`startup.quiet: true`) and renders above the editor; dismissed
+  after first prompt (quiet restored mid-session); `/dashboard` restored it;
+  recent-sessions rows populated from the host API.
+- pi: dashboard replaces the native header where the probe passes; no
+  omp-specific hint; dismissal and `/dashboard` identical.

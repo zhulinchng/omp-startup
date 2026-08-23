@@ -63,8 +63,7 @@ always keep these values:
   "quote": [],
   "dismiss": true,
   "command": "dashboard",
-  "replaceHeader": false,
-  "hideNativeWelcome": false
+  "replaceNativeWelcome": true
 }
 ```
 
@@ -77,8 +76,8 @@ always keep these values:
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | replica widget above the editor | with `hideNativeWelcome: true`, the plugin sets `startup.quiet` for the session (previous value restored at shutdown; takes effect from the next launch); without it, both stack and the widget shows a hint pointing at that setting |
-| Pi | additive widget above the editor | native header stays; `replaceHeader: true` swaps it (dismiss restores) |
+| omp | quiet takeover + widget above the editor | by default the plugin sets `startup.quiet` while the dashboard shows (previous value restored as soon as it hides); `"replaceNativeWelcome": false` leaves the native welcome untouched and makes the dashboard manual-only |
+| Pi | header replacement in place | by default the dashboard swaps the native header component and scrolls away like it (dismiss restores); `false` keeps the native chrome untouched |
 
 Routing is decided at runtime by probing whether `setHeader` actually works —
 no version sniffing; if either host changes, the plugin adapts.

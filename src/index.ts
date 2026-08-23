@@ -6,12 +6,16 @@
  *     user action, allowed even without any config file).
  *   - `session_start`: load layered config; if nothing is configured anywhere,
  *     do NOTHING — native welcome screens stay exactly as without the plugin.
- *     Otherwise mount the dashboard (Pi: additive widget above the editor, or
- *     full header replacement under explicit `replaceHeader`; omp: widget).
+ *     Otherwise take over the native welcome slot (default,
+ *     `replaceNativeWelcome: true`): Pi swaps its header component in place so
+ *     the dashboard scrolls away like the native header; omp has no stream API,
+ *     so it suppresses the built-in welcome via `startup.quiet` and mounts the
+ *     widget above the editor. With `replaceNativeWelcome: false` nothing
+ *     mounts at startup — the dashboard is manual-only (/dashboard).
  *   - `before_agent_start`: dismiss-on-first-prompt when configured.
- *   - `session_shutdown`: release an opt-in `hideNativeWelcome` engagement
+ *   - `session_shutdown`: release a `replaceNativeWelcome` engagement
  *     (restores the previous `startup.quiet` value; the only settings write
- *     this extension ever performs, and only when explicitly configured).
+ *     this extension performs, and only on omp while mounted by default).
  */
 
 import { homedir } from "node:os";
@@ -27,8 +31,8 @@ import {
 	type DashboardState,
 } from "./host.ts";
 
-/** Dim line rendered inside the widget on non-header hosts (currently omp), where the replica stacks over the built-in welcome. Transient notify channels drop content presented around startup, so the hint lives in the widget itself. */
-const QUIET_ADVISORY = "omp-startup: set startup.quiet=true to hide the built-in welcome while this shows";
+/** Dim line rendered inside the widget whenever we stack beside the built-in welcome on an omp-family host (takeover off, or a manual /dashboard show). Transient notify channels drop content presented around startup, so the hint lives in the widget itself. */
+const QUIET_ADVISORY = 'omp-startup: set "replaceNativeWelcome": true to replace the built-in welcome';
 
 type MountMode = "header" | "widget" | null;
 
@@ -56,7 +60,8 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	let mountMode: MountMode = null;
 	let visible = false;
 	/**
-	 * Opt-in `hideNativeWelcome` capture latch. Holds the pre-existing
+	 * `replaceNativeWelcome` capture latch (default-on takeover; `false`
+	 * disables it). Holds the pre-existing
 	 * startup.quiet value plus whether WE changed it. Lives from mount until
 	 * the dashboard unmounts (dismiss/toggle-off) or shutdown, so the user's
 	 * original value is captured before our first write and restored exactly
@@ -84,31 +89,32 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	}
 
 	function mount(ctx: ExtensionContextSubset): void {
-		if (headerCapable && cfgRef.current.replaceHeader) {
+		if (headerCapable && cfgRef.current.replaceNativeWelcome) {
 			ctx.ui.setHeader(dash.factory);
 			mountMode = "header";
 			stateRef.current.hint = undefined;
 		} else {
 			ctx.ui.setWidget(WIDGET_KEY, dash.factory, { placement: "aboveEditor" });
 			mountMode = "widget";
-			// Non-header host: if we stacked over a built-in welcome, point at
-			// the quiet setting. omp exposes VERSION; upstream Pi does not, and
-			// its own quietStartup key differs — so gate the hint on VERSION.
+			// Stacked over a built-in welcome (omp-family host) without takeover:
+			// point at the setting that would replace it. omp exposes VERSION;
+			// upstream Pi does not, and its own quietStartup key differs — so
+			// gate the hint on VERSION.
 			const stackedOmpWelcome = !headerCapable && stateRef.current.version !== "";
 			stateRef.current.hint =
-				stackedOmpWelcome && !cfgRef.current.hideNativeWelcome ? QUIET_ADVISORY : undefined;
+				stackedOmpWelcome && !cfgRef.current.replaceNativeWelcome ? QUIET_ADVISORY : undefined;
 		}
 		visible = true;
 		void engageQuiet();
 	}
 
 	async function engageQuiet(): Promise<void> {
-		if (quietLatch || !cfgRef.current.hideNativeWelcome) return;
+		if (quietLatch || !cfgRef.current.replaceNativeWelcome) return;
 		if (headerCapable || stateRef.current.version === "") return; // omp family only
 		const settings = await loadHostSettings();
 		// Re-validate after the await: the dashboard may have been dismissed or
 		// toggled off, or config reloaded, while we were importing.
-		if (!settings || mountMode !== "widget" || !visible || !cfgRef.current.hideNativeWelcome) return;
+		if (!settings || mountMode !== "widget" || !visible || !cfgRef.current.replaceNativeWelcome) return;
 		const previous = settings.get("startup.quiet");
 		const wrote = previous !== true;
 		quietLatch = { previous, wrote };
@@ -209,7 +215,9 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			}
 		}
 
-		mount(ctx);
+		// replaceNativeWelcome:false means the native welcome owns startup; the
+		// dashboard is manual-only (/dashboard).
+		if (cfgRef.current.replaceNativeWelcome) mount(ctx);
 	});
 
 	api.on("before_agent_start", (_event, ctx) => {

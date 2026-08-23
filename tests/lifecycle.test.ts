@@ -39,6 +39,31 @@ function scratchProject(config: Record<string, unknown> | undefined): { cwd: str
 	}
 	return { cwd: dir, dispose: () => rmSync(dir, { recursive: true, force: true }) };
 }
+function makeFakeSettings(initialQuiet?: unknown) {
+	const calls: Array<{ op: "get" | "set"; path: string; value?: unknown }> = [];
+	let quiet = initialQuiet;
+	let flushes = 0;
+	const fake = {
+		get(path: string) {
+			calls.push({ op: "get", path });
+			return path === "startup.quiet" ? quiet : undefined;
+		},
+		set(path: string, value: unknown) {
+			calls.push({ op: "set", path, value });
+			if (path === "startup.quiet") quiet = value;
+		},
+		async flush() {
+			flushes++;
+		},
+	};
+	return { fake, calls, flushed: () => flushes };
+}
+
+async function drain(): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	setImmediate(resolve);
+	await promise;
+}
 
 interface Harness {
 	api: ReturnType<typeof makeMockApi>;
@@ -131,13 +156,13 @@ describe("lifecycle: inert rule", () => {
 		}
 	});
 
-	it("keeps the additive widget off the header when replaceHeader is unset (Pi)", async () => {
+	it("takes the header route by default on a header-capable host (Pi)", async () => {
 		const project = scratchProject({ greeting: "Ahoy!" });
 		try {
 			const h = boot({ headerMode: "sync", cwd: project.cwd });
 			await h.sessionStart();
-			assert.ok(h.calls.setHeader.at(-1)?.factory === undefined, "probe must restore before widget mount");
-			assert.ok(h.calls.setWidget.some(c => c.key === WIDGET_KEY && c.content !== undefined));
+			assert.ok(h.calls.setHeader.some(c => c.factory !== undefined && c.factory !== null));
+			assert.ok(!h.calls.setWidget.some(c => c.content !== undefined)); // no additive widget
 		} finally {
 			project.dispose();
 		}
@@ -145,20 +170,44 @@ describe("lifecycle: inert rule", () => {
 });
 
 describe("lifecycle: omp host routing (no-op setHeader)", () => {
-	it("mounts the replica widget above the editor with the quiet hint", async () => {
+	it("mounts the widget and engages startup.quiet on launch (omp family)", async () => {
 		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
 		try {
 			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
 			await h.sessionStart();
+			await drain();
+			const sets = settings.calls.filter(c => c.op === "set");
+			assert.equal(sets.length, 1);
+			assert.equal(sets[0]?.path, "startup.quiet");
+			assert.equal(sets[0]?.value, true);
 			assert.equal(h.calls.setWidget.length, 1);
 			assert.equal(h.calls.setWidget[0]?.key, WIDGET_KEY);
-			assert.equal((h.calls.setWidget[0]?.options as { placement?: string } | undefined)?.placement, "aboveEditor");
-			assert.equal(h.calls.setHeader.length, 0); // never claims the header on omp
-			const widgetContent = h.calls.setWidget[0]?.content as (t: unknown, th: unknown) => { render(w: number): string[] };
-			const lines = widgetContent({ requestRender() {} }, INLINE_THEME).render(100).join("\n");
+			const widgetContent = h.calls.setWidget[0]?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = widgetContent?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
 			assert.ok(lines.includes("Ahoy!"));
-			assert.ok(lines.includes("startup.quiet=true")); // VERSION present → omp-family hint
+			assert.ok(!lines.includes("startup.quiet=true"), "advisory suppressed once takeover engages");
 		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("leaves the native welcome alone at startup when takeover is disabled", async () => {
+		const project = scratchProject({ greeting: "Ahoy!", replaceNativeWelcome: false });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0); // nothing automounts
+			assert.equal(settings.calls.length, 0); // and the plugin stays read-only
+		} finally {
+			setHostSettingsForTest(null);
 			project.dispose();
 		}
 	});
@@ -194,22 +243,22 @@ describe("lifecycle: omp host routing (no-op setHeader)", () => {
 });
 
 describe("lifecycle: pi host routing", () => {
-	it("early no-op session_start followed by real one ends in widget mode without the omp hint", async () => {
+	it("early runner-era session_start followed by the real TUI ends in header mode", async () => {
 		const project = scratchProject({ greeting: "Ahoy!" });
 		try {
 			// Event 1: runner-era context (omp-style no-op setHeader, no VERSION).
 			const early = boot({ headerMode: "noop", version: undefined, cwd: project.cwd });
 			await early.sessionStart("startup");
-			// Event 2: interactive-mode context on the same extension instance.
-			const lateCtx = makeMockCtx({ headerMode: "noop", version: undefined });
-			// The handler is already registered; invoke it again with the real ctx.
+			// Event 2: interactive-mode context on the same extension instance;
+			// its setHeader actually works (builds where the header exists first).
+			const lateCtx = makeMockCtx({ headerMode: "sync", version: undefined });
 			await early.api.handlerFor("session_start")({ reason: "startup" }, { ...lateCtx.ctx, cwd: project.cwd });
-			const hintCalls = lateCtx.calls.notify.filter(n => n.message.includes("startup.quiet")).length;
-			assert.equal(hintCalls, 0); // no notify-based hint by design
-			const widgetFactory = (lateCtx.calls.setWidget.at(-1) ?? early.calls.setWidget.at(-1))?.content as
+			const lastHeader = lateCtx.calls.setHeader.at(-1);
+			const widgetFactory = lastHeader?.factory as
 				| ((t: unknown, th: unknown) => { render(w: number): string[] })
 				| undefined;
-			const rendered = widgetFactory?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(widgetFactory, "the real context receives the dashboard via setHeader");
+			const rendered = widgetFactory({ requestRender() {} }, INLINE_THEME).render(100).join("\n");
 			assert.ok(rendered.includes("Ahoy!"));
 			assert.ok(!rendered.includes("startup.quiet")); // no VERSION on Pi → no omp hint
 		} finally {
@@ -217,21 +266,8 @@ describe("lifecycle: pi host routing", () => {
 		}
 	});
 
-	it("replaceHeader takes the header route on a header-capable host", async () => {
-		const project = scratchProject({ greeting: "Ahoy!", replaceHeader: true });
-		try {
-			const h = boot({ headerMode: "sync", version: undefined, cwd: project.cwd });
-			await h.sessionStart();
-			assert.equal(h.calls.setHeader.length >= 1, true); // probe sentinel + dashboard
-			assert.ok(h.calls.setHeader.some(c => c.factory !== undefined && c.factory !== null));
-			assert.ok(!h.calls.setWidget.some(c => c.content !== undefined));
-		} finally {
-			project.dispose();
-		}
-	});
-
 	it("dismiss restores the native header (setHeader undefined) in header mode", async () => {
-		const project = scratchProject({ greeting: "Ahoy!", replaceHeader: true });
+		const project = scratchProject({ greeting: "Ahoy!" });
 		try {
 			const h = boot({ headerMode: "sync", cwd: project.cwd });
 			await h.sessionStart();
@@ -341,34 +377,9 @@ describe("lifecycle: session hygiene", () => {
 	});
 });
 
-describe("lifecycle: hideNativeWelcome quiet takeover", () => {
-	function makeFakeSettings(initialQuiet?: unknown) {
-		const calls: Array<{ op: "get" | "set"; path: string; value?: unknown }> = [];
-		let quiet = initialQuiet;
-		let flushes = 0;
-		const fake = {
-			get(path: string) {
-				calls.push({ op: "get", path });
-				return path === "startup.quiet" ? quiet : undefined;
-			},
-			set(path: string, value: unknown) {
-				calls.push({ op: "set", path, value });
-				if (path === "startup.quiet") quiet = value;
-			},
-			async flush() {
-				flushes++;
-			},
-		};
-		return { fake, calls, flushed: () => flushes };
-	}
-
-	async function drain(): Promise<void> {
-		const { promise, resolve } = Promise.withResolvers<void>();
-		setImmediate(resolve);
-		await promise;
-	}
+describe("lifecycle: replaceNativeWelcome welcome takeover", () => {
 	it("engages startup.quiet once on mount and suppresses the advisory hint (omp family)", async () => {
-		const project = scratchProject({ hideNativeWelcome: true, greeting: "Solo" });
+		const project = scratchProject({ greeting: "Solo" });
 		const settings = makeFakeSettings(undefined);
 		setHostSettingsForTest(settings.fake);
 		try {
@@ -394,7 +405,7 @@ describe("lifecycle: hideNativeWelcome quiet takeover", () => {
 	});
 
 	it("restores the previous value on session_shutdown", async () => {
-		const project = scratchProject({ hideNativeWelcome: true });
+		const project = scratchProject({ greeting: "Ahoy!" });
 		const settings = makeFakeSettings(false);
 		setHostSettingsForTest(settings.fake);
 		try {
@@ -417,7 +428,7 @@ describe("lifecycle: hideNativeWelcome quiet takeover", () => {
 	});
 
 	it("never writes when the user already had quiet enabled", async () => {
-		const project = scratchProject({ hideNativeWelcome: true });
+		const project = scratchProject({ greeting: "Ahoy!" });
 		const settings = makeFakeSettings(true);
 		setHostSettingsForTest(settings.fake);
 		try {
@@ -435,21 +446,21 @@ describe("lifecycle: hideNativeWelcome quiet takeover", () => {
 		}
 	});
 
-	it("leaves settings untouched when the key is absent or the header route wins", async () => {
-		const absent = scratchProject({ greeting: "Plain" });
-		const absentSettings = makeFakeSettings();
-		setHostSettingsForTest(absentSettings.fake);
+	it("leaves settings untouched when takeover is disabled or the header route wins", async () => {
+		const optedOut = scratchProject({ greeting: "Plain", replaceNativeWelcome: false });
+		const optedOutSettings = makeFakeSettings();
+		setHostSettingsForTest(optedOutSettings.fake);
 		try {
-			const h1 = boot({ headerMode: "noop", version: "18.0.1", cwd: absent.cwd });
+			const h1 = boot({ headerMode: "noop", version: "18.0.1", cwd: optedOut.cwd });
 			await h1.sessionStart();
 			await drain();
-			assert.ok(h1.calls.setWidget.length > 0); // mounted…
-			assert.equal(absentSettings.calls.length, 0); // …without touching settings
+			assert.equal(h1.calls.setWidget.length, 0); // nothing mounted at startup…
+			assert.equal(optedOutSettings.calls.length, 0); // …and no settings traffic
 		} finally {
-			absent.dispose();
+			optedOut.dispose();
 		}
 
-		const headerRoute = scratchProject({ replaceHeader: true, hideNativeWelcome: true });
+		const headerRoute = scratchProject({ greeting: "Ahoy!" });
 		const headerSettings = makeFakeSettings();
 		setHostSettingsForTest(headerSettings.fake);
 		try {
@@ -465,7 +476,7 @@ describe("lifecycle: hideNativeWelcome quiet takeover", () => {
 	});
 
 	it("restores on dismissal and re-engages with a fresh capture on re-show", async () => {
-		const project = scratchProject({ hideNativeWelcome: true });
+		const project = scratchProject({ greeting: "Ahoy!" });
 		const settings = makeFakeSettings(undefined);
 		setHostSettingsForTest(settings.fake);
 		try {
@@ -492,6 +503,37 @@ describe("lifecycle: hideNativeWelcome quiet takeover", () => {
 				settings.calls.filter(c => c.op === "set").map(s => s.value),
 				[true, false, true, false],
 			);
+		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("does not automount when takeover is disabled; manual /dashboard stacks with advisory", async () => {
+		const project = scratchProject({ greeting: "Manual", replaceNativeWelcome: false });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0); // native welcome owns startup
+			assert.equal(settings.calls.length, 0);
+
+			const toggle = h.api.commandHandlerNamed("dashboard");
+			await toggle("", h.ctx); // manual show
+			await drain();
+			assert.equal(h.calls.setWidget.length, 1);
+			const widgetContent = h.calls.setWidget[0]?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = widgetContent?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("Manual"));
+			assert.ok(lines.includes("replaceNativeWelcome"), "stacked show carries the advisory");
+			assert.equal(settings.calls.length, 0); // still fully read-only
+
+			await toggle("", h.ctx); // second invocation hides again
+			assert.ok(h.calls.setWidget.some(c => c.content === undefined));
 		} finally {
 			setHostSettingsForTest(null);
 			project.dispose();

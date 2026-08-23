@@ -14,16 +14,17 @@ Core contract (user-mandated, enforced by tests):
 1. No config file anywhere → plugin completely inert (no host UI calls).
 2. Partial config → only configured keys change; everything else renders
    native-equivalent defaults (`DEFAULT_CONFIG` mirrors omp's `WelcomeComponent`).
-3. The plugin writes no harness settings, except one explicit opt-in: with
-   `hideNativeWelcome: true` on an omp-family host it sets `startup.quiet`
-   via the host SDK while mounted and restores the latched previous value on
-   `session_shutdown`. Without that key the `startup.quiet` hint stays advisory text only.
+3. The plugin writes no harness settings, except the welcome takeover on omp:
+   with `replaceNativeWelcome: true` (the default) it sets `startup.quiet` via
+   the host SDK while mounted and restores the latched previous value when the
+   dashboard hides or on `session_shutdown`. Setting it `false` makes every
+   code path read-only.
 
 ## Architecture & Data Flow
 
 | Module | Responsibility |
 |---|---|
-| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `before_agent_start` / `session_shutdown`; owns mount state (`headerCapable`, `mountMode`, `visible`) plus the `quietLatch` opt-in capture (engageQuiet/releaseQuiet). |
+| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `before_agent_start` / `session_shutdown`; owns mount state (`headerCapable`, `mountMode`, `visible`) plus the `quietLatch` takeover capture (engageQuiet/releaseQuiet). |
 | `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` — `null` only when **no config file exists anywhere**; files that exist but carry nothing recognized return defaults with empty `explicitKeys` plus warnings. Also `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
 | `src/host.ts` | Host abstraction, failure-tolerant: `probeHeaderSupport(ui)` (behavioral capability probe), `snapshotInfo(ctx, api)`, `fetchBranch(api)`, `fetchRecentSessions(cwd, count)`, `loadHostSettings()` (feature-detected host settings singleton; `setHostSettingsForTest` seam), `detectAppName()`, constant `WIDGET_KEY = "omp-startup"`. |
 | `src/dashboard.ts` | Pure renderer, no host imports: `renderDashboard(cfg, state, theme, termWidth)`, `makeDashboardComponent(stateRef, cfgRef)` → `{factory, refresh}`. ANSI-safe width math, 5-stop diagonal gradient, box/plain assembly. |
@@ -36,12 +37,14 @@ before any mount (inert; warnings about the user's own files are still shown).
 Otherwise: surface warnings once via `ctx.ui.notify(…, "warning")`, snapshot info,
 fire-and-forget `void refreshAsync()` (git branch + recent sessions mutate
 `stateRef`, then `dash.refresh()` → captured `tui.requestRender()`), then route:
-header-capable && `cfg.replaceHeader === true` → `ui.setHeader(factory)`
-(opt-in takeover); otherwise → `ui.setWidget(WIDGET_KEY, factory, {placement:"aboveEditor"})`.
-On non-header hosts exposing `VERSION` (omp-family signal; upstream Pi exports none),
-a dim quiet-advisory line is embedded in the widget render (suppressed while
-`hideNativeWelcome` has engaged quiet).
-Opt-in quiet takeover (omp widget route only, `hideNativeWelcome`):
+`cfg.replaceNativeWelcome === false` → mount nothing at startup (manual-only
+via `/dashboard`); header-capable && true → `ui.setHeader(factory)` (in-place
+header replacement, dismiss restores); otherwise → `ui.setWidget(WIDGET_KEY,
+factory, {placement:"aboveEditor"})`. On non-header hosts exposing `VERSION`
+(omp-family signal; upstream Pi exports none), a dim quiet-advisory line is
+embedded in the widget render whenever we stack beside the native welcome
+(takeover off, e.g. a manual show).
+Quiet takeover (omp widget route only):
 `void engageQuiet()` after mount; `unmount()` (dismiss or toggle-off) fires
 `void releaseQuiet()` — restoring mid-session so the debounced settings save
 lands while the process lives. The `session_shutdown` handler additionally
@@ -129,8 +132,8 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 - Suite map: `config.test.ts` (23 — inert rule, layers, coercion, tokens),
   `dashboard.test.ts` (34 — parity, delta rendering, geometry sweep),
   `host.test.ts` (19 — probe/fetch/settings-seam classification),
-  `lifecycle.test.ts` (26 — omp vs pi routing through mock hosts, quiet
-  takeover engage/restore). Total 102.
+  `lifecycle.test.ts` (27 — omp vs pi routing through mock hosts, quiet
+  takeover engage/restore). Total 103.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

@@ -271,19 +271,19 @@ console.log("5. snapshot info");
 }
 
 // ---------------------------------------------------------------------------
-console.log("6. hideNativeWelcome settings seam");
-withTempHome({ hideNativeWelcome: true }, (cwd, home) => {
+console.log("6. replaceNativeWelcome settings seam");
+withTempHome({ replaceNativeWelcome: true }, (cwd, home) => {
 	const loaded = loadConfig(cwd, home);
 	check(
-		"hideNativeWelcome parses as explicit key",
-		loaded?.cfg.hideNativeWelcome === true && loaded.explicitKeys.has("hideNativeWelcome"),
+		"replaceNativeWelcome parses as explicit key",
+		loaded?.cfg.replaceNativeWelcome === true && loaded.explicitKeys.has("replaceNativeWelcome"),
 	);
 });
-withTempHome({ hideNativeWelcome: "yes" }, (cwd, home) => {
+withTempHome({ replaceNativeWelcome: "yes" }, (cwd, home) => {
 	const loaded = loadConfig(cwd, home);
 	check(
-		"hideNativeWelcome non-boolean warns and defaults to false",
-		loaded?.cfg.hideNativeWelcome === false && loaded.warnings.some(w => w.includes('"hideNativeWelcome"')),
+		"replaceNativeWelcome non-boolean warns and defaults to true",
+		loaded?.cfg.replaceNativeWelcome === true && loaded.warnings.some(w => w.includes('"replaceNativeWelcome"')),
 	);
 });
 {

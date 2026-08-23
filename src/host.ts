@@ -162,7 +162,7 @@ export async function fetchRecentSessions(cwd: string, count: number): Promise<S
 }
 
 // ---------------------------------------------------------------------------
-// Host settings access (hideNativeWelcome support)
+// Host settings access (replaceNativeWelcome takeover)
 // ---------------------------------------------------------------------------
 
 /** Minimal shape of the host SDK settings singleton this extension relies on. */

@@ -139,8 +139,7 @@ describe("config: defaults are native-equivalent", () => {
 		assert.equal(DEFAULT_CONFIG.sessions, 4);
 		assert.equal(DEFAULT_CONFIG.dismiss, true);
 		assert.equal(DEFAULT_CONFIG.command, "dashboard");
-		assert.equal(DEFAULT_CONFIG.replaceHeader, false);
-		assert.equal(DEFAULT_CONFIG.hideNativeWelcome, false);
+		assert.equal(DEFAULT_CONFIG.replaceNativeWelcome, true);
 		assert.deepEqual(DEFAULT_CONFIG.info, ["{model}", "{provider}"]);
 		assert.deepEqual(DEFAULT_CONFIG.left, ["greeting", "blank", "logo", "blank", "info"]);
 		assert.deepEqual(DEFAULT_CONFIG.right, ["shortcuts", "sessions"]);
@@ -300,22 +299,22 @@ describe("config: coercion and warnings", () => {
 		}
 	});
 
-	it("parses hideNativeWelcome and rejects non-boolean values", () => {
-		const on = withDirs({ project: { hideNativeWelcome: true } });
+	it("parses replaceNativeWelcome and rejects non-boolean values", () => {
+		const on = withDirs({ project: { replaceNativeWelcome: true } });
 		try {
 			const loaded = loadConfig(on.cwd, on.home);
 			assert.ok(loaded);
-			assert.equal(loaded.cfg.hideNativeWelcome, true);
-			assert.ok(loaded.explicitKeys.has("hideNativeWelcome"));
+			assert.equal(loaded.cfg.replaceNativeWelcome, true);
+			assert.ok(loaded.explicitKeys.has("replaceNativeWelcome"));
 		} finally {
 			on.dispose();
 		}
-		const bad = withDirs({ project: { hideNativeWelcome: "yes" } });
+		const bad = withDirs({ project: { replaceNativeWelcome: "yes" } });
 		try {
 			const loaded = loadConfig(bad.cwd, bad.home);
 			assert.ok(loaded);
-			assert.equal(loaded.cfg.hideNativeWelcome, false);
-			assert.ok(loaded.warnings.some(w => w.includes('"hideNativeWelcome"')));
+			assert.equal(loaded.cfg.replaceNativeWelcome, true);
+			assert.ok(loaded.warnings.some(w => w.includes('"replaceNativeWelcome"')));
 		} finally {
 			bad.dispose();
 		}
