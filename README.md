@@ -63,7 +63,8 @@ always keep these values:
   "quote": [],
   "dismiss": true,
   "command": "dashboard",
-  "replaceHeader": false
+  "replaceHeader": false,
+  "hideNativeWelcome": false
 }
 ```
 
@@ -76,7 +77,7 @@ always keep these values:
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | replica widget above the editor | untouched unless you set `startup.quiet: true`; while stacked, the widget shows a one-line hint pointing there |
+| omp | replica widget above the editor | with `hideNativeWelcome: true`, the plugin sets `startup.quiet` for the session (previous value restored at shutdown; takes effect from the next launch); without it, both stack and the widget shows a hint pointing at that setting |
 | Pi | additive widget above the editor | native header stays; `replaceHeader: true` swaps it (dismiss restores) |
 
 Routing is decided at runtime by probing whether `setHeader` actually works —

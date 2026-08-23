@@ -160,3 +160,69 @@ export async function fetchRecentSessions(cwd: string, count: number): Promise<S
 		return [];
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Host settings access (hideNativeWelcome support)
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of the host SDK settings singleton this extension relies on. */
+export interface HostSettings {
+	get(path: string): unknown;
+	set(path: string, value: unknown): void;
+	/**
+	 * Flushes debounced persistence to disk. Optional: needed when restoring
+	 * during session_shutdown, because a pending 100ms debounced save would
+	 * otherwise be dropped when the host exits.
+	 */
+	flush?(): Promise<void>;
+}
+
+let settingsOverride: HostSettings | undefined;
+let settingsOverridden = false;
+
+/**
+ * Test seam: force loadHostSettings() to return `s` (pass undefined to
+ * simulate an absent SDK); pass null to clear the override entirely.
+ */
+export function setHostSettingsForTest(s: HostSettings | undefined | null): void {
+	if (s === null) {
+		settingsOverride = undefined;
+		settingsOverridden = false;
+		return;
+	}
+	settingsOverride = s;
+	settingsOverridden = true;
+}
+
+/**
+ * The host SDK's settings singleton, or undefined when unavailable.
+ *
+ * omp exports one — `settings.set("startup.quiet", …)` updates memory now and
+ * persists (debounced) to the global config.yml; upstream Pi exports none.
+ * Feature-detected dynamic import, same pattern as listViaHostPackage:
+ * absence or drift degrades to undefined and callers keep advisory-only mode.
+ */
+export async function loadHostSettings(): Promise<HostSettings | undefined> {
+	if (settingsOverridden) return settingsOverride;
+	try {
+		const mod = await import("@earendil-works/pi-coding-agent");
+		const s: unknown = mod.settings;
+		if (typeof s !== "object" || s === null) return undefined;
+		// Named typed view so members can be inspected; each member is validated
+		// by typeof below before use. (`in` checks are unreliable here: bundled
+		// module-namespace objects may answer `in` falsely for existing props.)
+		const candidate = s as { get?: unknown; set?: unknown };
+		const { get, set } = candidate;
+		if (typeof get !== "function" || typeof set !== "function") {
+			return undefined;
+		}
+		return {
+			get: path => get(path),
+			set: (path, value) => {
+				set(path, value);
+			},
+		};
+	} catch {
+		return undefined;
+	}
+}

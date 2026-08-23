@@ -128,4 +128,7 @@ declare module "@earendil-works/pi-coding-agent" {
 				list?(cwd: string): Promise<HostSessionInfoRow[]>;
 		  }
 		| undefined;
+
+	/** omp only: global settings singleton (`get`/`set` on dotted paths); feature-detected. */
+	export const settings: unknown;
 }

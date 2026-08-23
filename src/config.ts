@@ -49,6 +49,8 @@ export interface DashboardConfig {
 	command: string;
 	/** Pi only: replace the native header instead of adding an above-editor widget. */
 	replaceHeader: boolean;
+	/** omp only: while the dashboard shows, set startup.quiet so the built-in welcome hides (restored on shutdown). */
+	hideNativeWelcome: boolean;
 }
 
 /** Native-equivalent defaults: an unconfigured render matches the host welcome. */
@@ -73,6 +75,7 @@ export const DEFAULT_CONFIG: DashboardConfig = {
 	dismiss: true,
 	command: "dashboard",
 	replaceHeader: false,
+	hideNativeWelcome: false,
 };
 
 const BLOCK_NAMES = ["greeting", "logo", "blank", "info", "shortcuts", "sessions"] as const;
@@ -285,6 +288,7 @@ export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 			case "gradient":
 			case "dismiss":
 			case "replaceHeader":
+			case "hideNativeWelcome":
 				return coerceBoolean(file, key, value, fallback as boolean, warnings) as DashboardConfig[K];
 			case "left":
 				return coerceBlocks(file, "left", value, fallback as BlockName[], warnings) as DashboardConfig[K];
@@ -320,6 +324,7 @@ export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 		dismiss: pick("dismiss"),
 		command: pick("command"),
 		replaceHeader: pick("replaceHeader"),
+		hideNativeWelcome: pick("hideNativeWelcome"),
 	};
 
 	return { cfg, explicitKeys, warnings };

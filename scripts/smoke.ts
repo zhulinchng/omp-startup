@@ -12,7 +12,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandTokens, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
-import { probeHeaderSupport, snapshotInfo, type DashboardState } from "../src/host.ts";
+import { loadHostSettings, probeHeaderSupport, snapshotInfo, type DashboardState } from "../src/host.ts";
 import { makeDashboardComponent, renderDashboard } from "../src/dashboard.ts";
 
 let failures = 0;
@@ -268,6 +268,27 @@ console.log("5. snapshot info");
 	const info = snapshotInfo(ctx as never, api as never);
 	check("snapshot fields populated", info.model === "gpt-5" && info.provider === "openai" && info.version === "0.7.7");
 	check("snapshot dir is basename", info.dir === "thing");
+}
+
+// ---------------------------------------------------------------------------
+console.log("6. hideNativeWelcome settings seam");
+withTempHome({ hideNativeWelcome: true }, (cwd, home) => {
+	const loaded = loadConfig(cwd, home);
+	check(
+		"hideNativeWelcome parses as explicit key",
+		loaded?.cfg.hideNativeWelcome === true && loaded.explicitKeys.has("hideNativeWelcome"),
+	);
+});
+withTempHome({ hideNativeWelcome: "yes" }, (cwd, home) => {
+	const loaded = loadConfig(cwd, home);
+	check(
+		"hideNativeWelcome non-boolean warns and defaults to false",
+		loaded?.cfg.hideNativeWelcome === false && loaded.warnings.some(w => w.includes('"hideNativeWelcome"')),
+	);
+});
+{
+	const resolved = await loadHostSettings();
+	check("loadHostSettings degrades to undefined in host-free environment", resolved === undefined);
 }
 
 console.log(failures === 0 ? "\nAll smoke checks passed." : `\n${failures} smoke check(s) FAILED.`);

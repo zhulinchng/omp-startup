@@ -9,13 +9,26 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import ompStartup from "../src/index.ts";
-import { WIDGET_KEY } from "../src/host.ts";
+import { WIDGET_KEY, loadHostSettings, setHostSettingsForTest } from "../src/host.ts";
 import { INLINE_THEME, makeMockApi, makeMockCtx, type RecordedUiCalls } from "./helpers.ts";
+
+// Hermeticity: index.ts resolves the user config layer via os.homedir().
+// Redirect $HOME for the whole file (each test file runs in its own process)
+// so a real ~/.config/dashboard/config.json on the dev machine can't leak in.
+const realHome = process.env.HOME;
+const fakeHome = mkdtempSync(join(tmpdir(), "omp-startup-home-"));
+before(() => {
+	process.env.HOME = fakeHome;
+});
+after(() => {
+	process.env.HOME = realHome;
+	rmSync(fakeHome, { recursive: true, force: true });
+});
 
 function scratchProject(config: Record<string, unknown> | undefined): { cwd: string; dispose(): void } {
 	const dir = join(tmpdir(), `omp-startup-life-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -325,5 +338,168 @@ describe("lifecycle: session hygiene", () => {
 		} finally {
 			project.dispose();
 		}
+	});
+});
+
+describe("lifecycle: hideNativeWelcome quiet takeover", () => {
+	function makeFakeSettings(initialQuiet?: unknown) {
+		const calls: Array<{ op: "get" | "set"; path: string; value?: unknown }> = [];
+		let quiet = initialQuiet;
+		let flushes = 0;
+		const fake = {
+			get(path: string) {
+				calls.push({ op: "get", path });
+				return path === "startup.quiet" ? quiet : undefined;
+			},
+			set(path: string, value: unknown) {
+				calls.push({ op: "set", path, value });
+				if (path === "startup.quiet") quiet = value;
+			},
+			async flush() {
+				flushes++;
+			},
+		};
+		return { fake, calls, flushed: () => flushes };
+	}
+
+	async function drain(): Promise<void> {
+		const { promise, resolve } = Promise.withResolvers<void>();
+		setImmediate(resolve);
+		await promise;
+	}
+	it("engages startup.quiet once on mount and suppresses the advisory hint (omp family)", async () => {
+		const project = scratchProject({ hideNativeWelcome: true, greeting: "Solo" });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain(); // second tick: engageQuiet resolves after refreshAsync chain
+			const sets = settings.calls.filter(c => c.op === "set");
+			assert.equal(sets.length, 1);
+			assert.equal(sets[0]?.path, "startup.quiet");
+			assert.equal(sets[0]?.value, true);
+
+			const latest = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(latest);
+			const lines = latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n");
+			assert.ok(!lines.includes("set startup.quiet=true"), "advisory must be suppressed");
+		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("restores the previous value on session_shutdown", async () => {
+		const project = scratchProject({ hideNativeWelcome: true });
+		const settings = makeFakeSettings(false);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			await h.shutdown();
+			await drain();
+			const sets = settings.calls.filter(c => c.op === "set");
+			assert.deepEqual(
+				sets.map(s => s.value),
+				[true, false],
+			);
+			assert.equal(settings.flushed(), 1, "restore must flush the debounced save");
+		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("never writes when the user already had quiet enabled", async () => {
+		const project = scratchProject({ hideNativeWelcome: true });
+		const settings = makeFakeSettings(true);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
+			await h.shutdown();
+			await drain();
+			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
+		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("leaves settings untouched when the key is absent or the header route wins", async () => {
+		const absent = scratchProject({ greeting: "Plain" });
+		const absentSettings = makeFakeSettings();
+		setHostSettingsForTest(absentSettings.fake);
+		try {
+			const h1 = boot({ headerMode: "noop", version: "18.0.1", cwd: absent.cwd });
+			await h1.sessionStart();
+			await drain();
+			assert.ok(h1.calls.setWidget.length > 0); // mounted…
+			assert.equal(absentSettings.calls.length, 0); // …without touching settings
+		} finally {
+			absent.dispose();
+		}
+
+		const headerRoute = scratchProject({ replaceHeader: true, hideNativeWelcome: true });
+		const headerSettings = makeFakeSettings();
+		setHostSettingsForTest(headerSettings.fake);
+		try {
+			const h2 = boot({ headerMode: "sync", version: "18.0.1", cwd: headerRoute.cwd });
+			await h2.sessionStart();
+			await drain();
+			assert.ok(h2.calls.setHeader.length > 0); // header route taken
+			assert.equal(headerSettings.calls.length, 0); // Pi owns its own header
+		} finally {
+			headerRoute.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("restores on dismissal and re-engages with a fresh capture on re-show", async () => {
+		const project = scratchProject({ hideNativeWelcome: true });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain(); // engage #1: set(true)
+			await h.beforeAgentStart(); // dismiss (unmount) → restore(false) mid-session
+			await drain();
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[true, false],
+				"dismissal must restore while the session is still alive",
+			);
+
+			const toggle = h.api.commandHandlerNamed("dashboard");
+			await toggle("", h.ctx); // remount → fresh capture (now false) → engage again
+			await drain();
+			await drain();
+			await h.shutdown(); // dashboard still visible → shutdown releases again
+			await drain();
+			assert.equal(settings.flushed(), 2, "each restore flushes");
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[true, false, true, false],
+			);
+		} finally {
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("loadHostSettings degrades to undefined in a host-free environment", async () => {
+		setHostSettingsForTest(null); // clear override → real probing path
+		assert.equal(await loadHostSettings(), undefined);
 	});
 });

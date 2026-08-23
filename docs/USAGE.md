@@ -118,6 +118,7 @@ Save as `.omp/dashboard.json` (omp projects), `.pi/dashboard.json`
 | `dismiss` | boolean | `true` | hide after the first submitted prompt |
 | `command` | string | `"dashboard"` | slash-command name (letters/digits/`_`/`-`) |
 | `replaceHeader` | boolean | `false` | **Pi only**: replace the whole native header instead of adding a widget |
+| `hideNativeWelcome` | boolean | `false` | **omp only**: while the dashboard shows, set `startup.quiet` so the built-in welcome stays hidden; the previous value is restored when the session shuts down |
 
 Blocks: `greeting` · `logo` · `blank` · `info` · `shortcuts` · `sessions`.
 A block named in both columns renders once, on the left.
@@ -153,16 +154,39 @@ flowchart TD
     R -- yes --> T["Dashboard replaces the native header<br/>dismiss restores it"]
     R -- no --> W["Dashboard widget above the editor,<br/>native header untouched"]
     Q -- "no (omp today, older Pi builds)" --> W2["Replica widget above the editor"]
-    W2 --> H["One-line hint inside the widget:<br/>consider startup.quiet=true"]
+    W2 --> K{"hideNativeWelcome?"}
+    K -- "yes" --> J["startup.quiet=true via host settings<br/>(restored on session_shutdown)"]
+    K -- "no" --> H["One-line hint inside the widget:<br/>consider startup.quiet=true"]
 ```
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | replica widget above the editor | still renders unless you set `startup.quiet: true`; while stacked, the widget shows a one-line hint pointing at that setting |
+| omp | replica widget above the editor | with `hideNativeWelcome: true` the plugin flips `startup.quiet` for the session (previous value restored at shutdown); without it, both boxes stack and the widget shows a one-line hint pointing at that setting |
 | Pi (0.84.x) | additive widget above the editor | native chrome untouched; `replaceHeader: true` engages on builds where the header already exists at `session_start` |
 
-The plugin never edits settings itself. The hint is informational only and
-disappears together with the dashboard.
+`hideNativeWelcome` notes (omp):
+
+- The host reads `startup.quiet` once at launch. Enabling the key therefore
+  still shows both boxes in the *current* session; from the next launch only
+  your dashboard renders.
+- The write goes to the user-global omp settings file, so a concurrently
+  running omp in another project sees quiet mode too while your dashboard is
+  up. The previous value is restored as soon as the dashboard hides (first
+  prompt with `dismiss: true`, or `/dashboard` toggle-off).
+- Exiting while the dashboard is still on screen restores at shutdown; that
+  late write can lose the race against process exit, leaving quiet on until
+  the next session that shows the dashboard releases it. A hard kill
+  (SIGKILL/power loss) behaves the same way.
+- When the previous value was unset, restoring leaves an explicit
+  `startup.quiet: false` behind — semantically identical to the default.
+
+Without the key the plugin never edits settings itself; while both boxes
+stack, the widget shows a one-line hint and it disappears together with the
+dashboard.
+
+The plugin writes harness settings in exactly one case: an explicit
+`hideNativeWelcome: true`, flipping/restoring the single `startup.quiet`
+value described above. Everything else remains read-only.
 
 ### Honest deviations from the native look
 
@@ -177,7 +201,7 @@ disappears together with the dashboard.
 | Symptom | Cause & fix |
 |---|---|
 | Nothing changes after adding a config file | File must be named exactly `dashboard.json` in `.omp/` (or `.pi/`) of the project, or `~/.config/dashboard/config.json`; JSON must parse; at least one recognized key must be present |
-| Two welcome boxes show on omp | Expected while stacked: set `"startup.quiet": true` in omp settings if you prefer only the dashboard |
+| Two welcome boxes show on omp | Expected while stacked; set `"hideNativeWelcome": true` (effect starts next launch) or `"startup.quiet": true` in omp settings directly |
 | Dashboard missing on Pi | Pi may have asked whether to trust the project directory — answer once; or move the extension to `~/.pi/agent/extensions` |
 | Sessions list empty | The sessions fetch degrades silently when the host API is unavailable; recent sessions appear once the host exposes them |
 | Wrong colors in the logo | Terminal lacks truecolor; set `"gradient": false` |
@@ -190,6 +214,6 @@ for that key and surfaces one warning naming the offending file.
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
-npm run smoke      # inert/render-delta/probe/token assertions (35 checks)
-npm test           # 85-assertion suite (node:test, zero extra deps)
+npm run smoke      # inert/render-delta/probe/token/seam assertions (39 checks)
+npm test           # 102-assertion suite (node:test, zero extra deps)
 ```

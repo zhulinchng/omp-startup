@@ -1,7 +1,7 @@
 # omp-startup — Architecture
 
 Technical reference for the codebase in this repository. Every behavioral claim
-here is enforced by the test suite (`npm test`, 85 assertions across 4 suites)
+here is enforced by the test suite (`npm test`, 102 assertions across 4 suites)
 or by the live host verifications summarized at the end.
 
 ## 1. What this is
@@ -25,7 +25,10 @@ Core product contract, enforced in code and tests:
 2. **Unconfigured elements keep native defaults** — `DEFAULT_CONFIG` mirrors
    the native omp `WelcomeComponent`; only explicitly configured keys change
    the render.
-3. **The plugin never writes harness settings** — it only renders an advisory.
+3. **The plugin writes no harness settings** — except one explicit opt-in:
+   `hideNativeWelcome: true` flips `startup.quiet` via the host SDK while the
+   dashboard is mounted on omp, and restores the captured previous value on
+   `session_shutdown`.
 
 ## 2. Module map
 
@@ -59,7 +62,8 @@ flowchart LR
 - `src/config.ts` — layered JSON loader with explicit-key tracking (drives the
   inert rule), per-key coercion with warnings, token expansion.
 - `src/host.ts` — everything host-shaped: capability probe, info snapshot,
-  git branch fetch, recent-sessions fetch (dynamic import of the host package).
+  git branch fetch, recent-sessions fetch (dynamic import of the host package),
+  `loadHostSettings()` (feature-detected settings singleton + test seam).
 - `src/dashboard.ts` — pure renderer: ANSI-aware width math, gradient painter,
   block builders, box/plain assembly, component factory.
 - `types.d.ts` — ambient declarations for the used API subset; consumed only
@@ -120,14 +124,16 @@ flowchart TD
     F -- yes --> G["ui.setHeader(dashboard)<br/>(full takeover, opt-in)"]
     F -- no --> H["ui.setWidget('omp-startup', …, aboveEditor)"]
     H --> I{"!headerCapable && VERSION present?<br/>(omp-family)"}
-    I -- yes --> J["embed quiet-setting hint in widget"]
+    I -- "yes && hideNativeWelcome" --> J2["engageQuiet(): set startup.quiet=true<br/>via host settings (previous value latched)"]
+    I -- "yes && !hideNativeWelcome" --> J["embed quiet-setting hint in widget"]
     I -- no --> K["no hint"]
 ```
 
 ## 4. Lifecycle and state machine
 
 Per-session state lives in the factory closure: `headerCapable`, `mountMode`
-(`"header" | "widget" | null`), `visible`. Events transition it as follows:
+(`"header" | "widget" | null`), `visible`, and `quietLatch` (the opt-in
+`hideNativeWelcome` capture, see below).
 
 ```mermaid
 stateDiagram-v2
@@ -160,13 +166,26 @@ sequenceDiagram
     S->>S: snapshotInfo writes stateRef
     S->>X: void refreshAsync non-blocking
     S->>R: mount via setWidget or setHeader
-Layers, later winning per key: built-in defaults ← user
-`~/.config/dashboard/config.json` ← project `<cwd>/.omp/dashboard.json`
-(falling back to `.pi/`). Only keys present in a file enter `explicitKeys`.
-`loadConfig` returns `null` only when **no config file exists anywhere**; when
-files exist but carry nothing recognized (empty object, unknown keys, broken
-JSON) it returns defaults with an empty `explicitKeys` plus the collected
-warnings — the lifecycle mounts nothing but still reports what is wrong.
+```
+
+### Opt-in quiet takeover (omp, `hideNativeWelcome: true`)
+
+`engageQuiet()` fires (detached) right after the widget mounts and resolves
+asynchronously, so a dismissal or toggle during the host-package import simply
+cancels. State lives in `quietLatch = { previous, wrote }`, one capture per
+engagement:
+
+- `previous === true` → nothing is ever written and release has nothing to
+  restore (avoids rewriting a user config that already said `quiet: true`).
+- **Primary restore point is unmount** (`before_agent_start` dismissal or
+  `/dashboard` toggle-off): mid-session there is ample runtime for the host's
+  debounced settings save, so the previous value reliably lands on disk.
+- `session_shutdown` additionally awaits `releaseQuiet()` as a fallback for
+  sessions that exit while still mounted. The host bounds shutdown handlers
+  (~2s) before tearing down, and its debounced persistence can lose that race —
+  in that case quiet stays `true` until the next engaged session releases it.
+  Restoring an originally unset key leaves an explicit `false` behind (the SDK
+  has no unset API).
 
 ## 5. Configuration pipeline
 
