@@ -8,10 +8,22 @@ both hosts behave exactly as without this plugin. Once you configure
 native look, because the defaults replicate omp's built-in welcome box. The
 plugin never writes harness settings.
 
-## Quick start
+## Install
+
+From npm (recommended — both hosts ship native installers):
 
 ```sh
-# pick a location per host (symlink tracks your checkout):
+omp plugin install omp-startup      # Oh My Pi, user-level (~/.omp/agent/plugins)
+pi install npm:omp-startup          # upstream Pi, user-level; add -l for project-local
+```
+
+Rerun the same command to update to the latest published version.
+`omp plugin uninstall omp-startup` / `pi remove omp-startup` removes it.
+
+Manual alternative from a source checkout:
+
+```sh
+# symlink tracks your checkout:
 ln -s /path/to/omp-startup ~/.omp/agent/extensions/omp-startup   # omp, user-level
 ln -s /path/to/omp-startup ~/.pi/agent/extensions/omp-startup    # Pi, user-level
 ```
@@ -48,13 +60,16 @@ no version sniffing; if either host changes, the plugin adapts.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — module map, capability
   probe design, lifecycle state machine, renderer pipeline, compatibility
   notes, and the live-host verification log.
+- **[docs/PUBLISHING.md](docs/PUBLISHING.md)** — release checklist for
+  maintainers (version bump, prepublish gate, `npm publish`) and the
+  deployment matrix for consumers.
 
 ## Development
 
 ```sh
 npm install         # dev-only tooling
 npm run typecheck   # strict tsc --noEmit (src + scripts + tests)
-npm run smoke       # render/probe/token assertions + sample boxes
+npm run smoke       # 35 host-free render/probe/token assertions
 npm test            # 85-assertion suite on node:test
 ```
 

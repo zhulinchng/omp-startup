@@ -18,6 +18,28 @@ the TypeScript sources directly.
 
 ## Install
 
+### From npm (recommended)
+
+Both hosts ship native installers that fetch from the npm registry and load
+the package via its manifest:
+
+```sh
+omp plugin install omp-startup        # Oh My Pi → ~/.omp/agent/plugins
+pi install npm:omp-startup            # Pi, user-level → settings.json extensions
+pi install -l npm:omp-startup         # Pi, project-local → .pi/settings.json
+```
+
+- **Update:** rerun the same command (fetches the latest published version).
+  omp: `omp plugin uninstall omp-startup` first if versions are cached.
+
+- **Remove:** `omp plugin uninstall omp-startup` / `pi remove omp-startup`.
+- The plugin stores no state; removal restores the previous welcome exactly.
+
+> **Pi note:** `pi install` records the package in
+> `settings.json#extensions`; `pi list` shows what's registered.
+
+### From a source checkout
+
 Pick **one** location per host. A symlink works and tracks your checkout;
 a plain copy works too.
 
@@ -48,6 +70,7 @@ so pointing a host at the repository directory is enough; it discovers
 > installs under `~/.pi/agent/extensions` are always trusted.
 
 **Uninstall:** delete the symlink. The plugin stores no state anywhere else.
+
 
 ## Configure
 
@@ -165,6 +188,6 @@ for that key and surfaces one warning naming the offending file.
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
-npm run smoke      # render + probe + token assertions, prints sample boxes
+npm run smoke      # inert/render-delta/probe/token assertions (35 checks)
 npm test           # 85-assertion suite (node:test, zero extra deps)
 ```

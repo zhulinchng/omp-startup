@@ -2,6 +2,27 @@
 	"name": "omp-startup",
 	"version": "0.1.0",
 	"description": "Customizable welcome/startup dashboard for Oh My Pi (omp) and upstream Pi coding agents. Inert until configured.",
+	"author": "Zhu Lin <zhulin@czl.my>",
+	"keywords": [
+		"omp",
+		"pi",
+		"oh-my-pi",
+		"coding-agent",
+		"dashboard",
+		"welcome",
+		"startup",
+		"tui",
+		"extension",
+		"plugin"
+	],
+	"files": [
+		"src",
+		"types.d.ts",
+		"docs",
+		"README.md",
+		"LICENSE"
+	],
+	"main": "./src/index.ts",
 	"type": "module",
 	"license": "MIT",
 	"omp": {
@@ -13,7 +34,8 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.ts",
-		"test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts"
+		"test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
+		"prepublishOnly": "npm run typecheck && npm test && npm run smoke"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",

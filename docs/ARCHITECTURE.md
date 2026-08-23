@@ -243,7 +243,7 @@ Documented deliberately; none affect the inert rule.
 | Layer | Mechanism |
 |---|---|
 | Unit | `node --test tests/*.test.ts` — 85 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, dismiss/toggle/shutdown hygiene |
-| Smoke | `scripts/smoke.ts` — printed renders for eyeballing plus assertion pass |
+| Smoke | `scripts/smoke.ts` — 35 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info) |
 | Types | `tsc --noEmit` strict, including `tests/` |
 | Live | PTY-driven omp 18.0.1 and pi 0.84.2 sessions (inert frame, configured frame, prompt-dismissal, `/dashboard` re-show, hint visibility) |
 
