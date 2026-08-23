@@ -1,6 +1,6 @@
 {
 	"name": "omp-startup",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Customizable welcome/startup dashboard for Oh My Pi (omp) and upstream Pi coding agents. Inert until configured.",
 	"author": "Zhu Lin <zhulin@czl.my>",
 	"keywords": [
