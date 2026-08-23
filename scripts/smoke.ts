@@ -12,7 +12,15 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandTokens, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
-import { loadHostSettings, probeHeaderSupport, snapshotInfo, type DashboardState } from "../src/host.ts";
+import {
+	clearQuietOwnership,
+	loadHostSettings,
+	probeHeaderSupport,
+	readQuietOwnership,
+	snapshotInfo,
+	writeQuietOwnership,
+	type DashboardState,
+} from "../src/host.ts";
 import { makeDashboardComponent, renderDashboard } from "../src/dashboard.ts";
 
 let failures = 0;
@@ -271,7 +279,7 @@ console.log("5. snapshot info");
 }
 
 // ---------------------------------------------------------------------------
-console.log("6. replaceNativeWelcome settings seam");
+console.log("6. replaceNativeWelcome quiet-ownership seam");
 withTempHome({ replaceNativeWelcome: true }, (cwd, home) => {
 	const loaded = loadConfig(cwd, home);
 	check(
@@ -290,6 +298,18 @@ withTempHome({ replaceNativeWelcome: "yes" }, (cwd, home) => {
 	const resolved = await loadHostSettings();
 	check("loadHostSettings degrades to undefined in host-free environment", resolved === undefined);
 }
+withTempHome(undefined, (cwd, home) => {
+	check("no marker initially", readQuietOwnership(home) === undefined);
+	writeQuietOwnership(home, { previous: false, state: "owned" });
+	check("marker roundtrips", JSON.stringify(readQuietOwnership(home)) === JSON.stringify({ previous: false, state: "owned" }));
+	writeQuietOwnership(home, { previous: true, state: "yielded" });
+	check("marker updates", readQuietOwnership(home)?.state === "yielded");
+	clearQuietOwnership(home);
+	check("marker clears", readQuietOwnership(home) === undefined);
+	mkdirSync(join(home, ".config", "dashboard"), { recursive: true });
+	writeFileSync(join(home, ".config", "dashboard", ".ownership.json"), "{bogus");
+	check("corrupt marker reads as absent", readQuietOwnership(home) === undefined);
+});
 
 console.log(failures === 0 ? "\nAll smoke checks passed." : `\n${failures} smoke check(s) FAILED.`);
 process.exitCode = failures === 0 ? 0 : 1;

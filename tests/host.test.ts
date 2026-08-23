@@ -4,17 +4,33 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { detectAppName, fetchBranch, fetchRecentSessions, mapSessionInfos, probeHeaderSupport, snapshotInfo } from "../src/host.ts";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it } from "node:test";
 import { makeMockApi, makeMockCtx } from "./helpers.ts";
+import {
+	clearQuietOwnership,
+	detectAppName,
+	fetchBranch,
+	fetchRecentSessions,
+	loadHostSettings,
+	mapSessionInfos,
+	probeHeaderSupport,
+	readQuietOwnership,
+	setHostSettingsForTest,
+	snapshotInfo,
+	writeQuietOwnership,
+} from "../src/host.ts";
 
 describe("probeHeaderSupport", () => {
-	it("detects upstream-Pi-style synchronous factory invocation", () => {
+	it("classifies Pi-style synchronous setHeader as supported", () => {
 		const ui = {
 			setHeader(factory: unknown) {
-				// Pi's setExtensionHeader: create the component, then mount it.
-				const component = (factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
-				component.render();
+				if (factory !== undefined) {
+					const component = (factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
+					component.render();
+				}
 			},
 			setWidget() {},
 			notify() {},
@@ -31,7 +47,6 @@ describe("probeHeaderSupport", () => {
 		const ui = { setHeader() { throw new Error("boom"); }, setWidget() {}, notify() {} };
 		assert.equal(probeHeaderSupport(ui as never), false);
 	});
-
 	it("restores the native header after a positive probe (no trace left on Pi)", () => {
 		const calls: Array<{ factory: unknown }> = [];
 		const ui = {
@@ -167,5 +182,78 @@ describe("fetchRecentSessions failure tolerance", () => {
 
 	it("short-circuits count <= 0 without touching the package", async () => {
 		assert.deepEqual(await fetchRecentSessions("/tmp/demo", 0), []);
+	});
+});
+
+describe("quiet-ownership marker", () => {
+	const home = mkdtempSync(join(tmpdir(), "omp-startup-host-"));
+	const dir = join(home, ".config", "dashboard");
+
+	after(() => {
+		rmSync(home, { recursive: true, force: true });
+	});
+
+	it("reads as absent when nothing was written", () => {
+		assert.equal(readQuietOwnership(home), undefined);
+	});
+
+	it("roundtrips owned and yielded records", () => {
+		writeQuietOwnership(home, { previous: false, state: "owned" });
+		assert.deepEqual(readQuietOwnership(home), { previous: false, state: "owned" });
+		writeQuietOwnership(home, { previous: true, state: "yielded" });
+		assert.deepEqual(readQuietOwnership(home), { previous: true, state: "yielded" });
+	});
+
+	it("creates the config directory on first write", () => {
+		rmSync(dir, { recursive: true, force: true });
+		assert.equal(existsSync(dir), false);
+		writeQuietOwnership(home, { previous: false, state: "owned" });
+		assert.equal(existsSync(dir), true);
+	});
+
+	it("treats corrupt or malformed markers as absent", () => {
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, ".ownership.json"), "{not json");
+		assert.equal(readQuietOwnership(home), undefined);
+		writeFileSync(join(dir, ".ownership.json"), JSON.stringify({ previous: "yes", state: "owned" }));
+		assert.equal(readQuietOwnership(home), undefined);
+		writeFileSync(join(dir, ".ownership.json"), JSON.stringify({ previous: false, state: "other" }));
+		assert.equal(readQuietOwnership(home), undefined);
+	});
+
+	it("clears the marker idempotently", () => {
+		clearQuietOwnership(home);
+		clearQuietOwnership(home); // second call must not throw
+		assert.equal(readQuietOwnership(home), undefined);
+	});
+});
+
+describe("loadHostSettings flush passthrough", () => {
+	it("exposes flush when the host SDK provides one", async () => {
+		let flushes = 0;
+		setHostSettingsForTest({
+			get: () => undefined,
+			set: () => {},
+			async flush() {
+				flushes++;
+			},
+		});
+		try {
+			const settings = await loadHostSettings();
+			await settings?.flush?.();
+			assert.equal(flushes, 1);
+		} finally {
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("omits flush when the host SDK lacks one", async () => {
+		setHostSettingsForTest({ get: () => undefined, set: () => {} });
+		try {
+			const settings = await loadHostSettings();
+			assert.equal(settings?.flush, undefined);
+		} finally {
+			setHostSettingsForTest(null);
+		}
 	});
 });

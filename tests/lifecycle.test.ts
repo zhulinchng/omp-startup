@@ -9,7 +9,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -38,6 +38,28 @@ function scratchProject(config: Record<string, unknown> | undefined): { cwd: str
 		writeFileSync(join(dir, ".omp", "dashboard.json"), JSON.stringify(config));
 	}
 	return { cwd: dir, dispose: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+// --- quiet-ownership marker helpers (state lives in the redirected $HOME) ---
+
+const ownershipDir = () => join(fakeHome, ".config", "dashboard");
+const ownershipFile = () => join(ownershipDir(), ".ownership.json");
+
+function seedOwnership(previous: boolean, state: "owned" | "yielded"): void {
+	mkdirSync(ownershipDir(), { recursive: true });
+	writeFileSync(ownershipFile(), JSON.stringify({ previous, state }));
+}
+
+function readOwnership(): { previous: boolean; state: string } | undefined {
+	try {
+		return JSON.parse(readFileSync(ownershipFile(), "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+function dropOwnership(): void {
+	rmSync(ownershipDir(), { recursive: true, force: true });
 }
 function makeFakeSettings(initialQuiet?: unknown) {
 	const calls: Array<{ op: "get" | "set"; path: string; value?: unknown }> = [];
@@ -71,7 +93,6 @@ interface Harness {
 	ctx: ExtensionContextSubset;
 	sessionStart(reason?: string): Promise<void>;
 	beforeAgentStart(): Promise<void>;
-	shutdown(): Promise<void>;
 }
 
 function boot(options: { headerMode: "noop" | "sync" | "throw"; version?: string; cwd: string }): Harness {
@@ -90,9 +111,6 @@ function boot(options: { headerMode: "noop" | "sync" | "throw"; version?: string
 		async beforeAgentStart() {
 			await mockApi.handlerFor("before_agent_start")({ prompt: "x" }, ctxWithCwd);
 		},
-		async shutdown() {
-			await mockApi.handlerFor("session_shutdown")({}, ctxWithCwd);
-		},
 	};
 }
 
@@ -108,9 +126,12 @@ describe("lifecycle: registration contract (both hosts)", () => {
 	it("subscribes to the shared event surface", () => {
 		const mock = makeMockApi();
 		ompStartup(mock.api);
-		for (const event of ["session_start", "before_agent_start", "session_shutdown"]) {
+		for (const event of ["session_start", "before_agent_start"]) {
 			assert.ok(mock.handlers.has(event), `missing ${event}`);
 		}
+		// Exit-time restores moved to session-start give-up paths: shutdown
+		// writes race host teardown and get lost (verified live on omp).
+		assert.ok(!mock.handlers.has("session_shutdown"), "session_shutdown must stay unsubscribed");
 	});
 });
 
@@ -177,7 +198,7 @@ describe("lifecycle: omp host routing (no-op setHeader)", () => {
 		try {
 			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
 			await h.sessionStart();
-			await drain();
+			await drain(); // second tick: claim resolves after refreshAsync chain
 			const sets = settings.calls.filter(c => c.op === "set");
 			assert.equal(sets.length, 1);
 			assert.equal(sets[0]?.path, "startup.quiet");
@@ -191,6 +212,7 @@ describe("lifecycle: omp host routing (no-op setHeader)", () => {
 			assert.ok(lines.includes("Ahoy!"));
 			assert.ok(!lines.includes("startup.quiet=true"), "advisory suppressed once takeover engages");
 		} finally {
+			dropOwnership();
 			setHostSettingsForTest(null);
 			project.dispose();
 		}
@@ -207,6 +229,7 @@ describe("lifecycle: omp host routing (no-op setHeader)", () => {
 			assert.equal(h.calls.setWidget.length, 0); // nothing automounts
 			assert.equal(settings.calls.length, 0); // and the plugin stays read-only
 		} finally {
+			dropOwnership(); // a stale owned marker would make give-up write here
 			setHostSettingsForTest(null);
 			project.dispose();
 		}
@@ -350,20 +373,6 @@ describe("lifecycle: /dashboard toggle", () => {
 });
 
 describe("lifecycle: session hygiene", () => {
-	it("resets visibility on session_shutdown", async () => {
-		const project = scratchProject({ greeting: "Ahoy!" });
-		try {
-			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
-			await h.sessionStart();
-			await h.shutdown();
-			await h.beforeAgentStart(); // must not unmount anything post-shutdown
-			const undefinedCalls = h.calls.setWidget.filter(c => c.content === undefined).length;
-			assert.equal(undefinedCalls, 0);
-		} finally {
-			project.dispose();
-		}
-	});
-
 	it("surfaces config warnings exactly once per load via notify", async () => {
 		const project = scratchProject({ greeting: 42 as unknown as string });
 		try {
@@ -377,8 +386,8 @@ describe("lifecycle: session hygiene", () => {
 	});
 });
 
-describe("lifecycle: replaceNativeWelcome welcome takeover", () => {
-	it("engages startup.quiet once on mount and suppresses the advisory hint (omp family)", async () => {
+describe("lifecycle: replaceNativeWelcome quiet ownership", () => {
+	it("claims quiet on mount: sets true, flushes, records the marker (omp family)", async () => {
 		const project = scratchProject({ greeting: "Solo" });
 		const settings = makeFakeSettings(undefined);
 		setHostSettingsForTest(settings.fake);
@@ -386,48 +395,27 @@ describe("lifecycle: replaceNativeWelcome welcome takeover", () => {
 			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
 			await h.sessionStart();
 			await drain();
-			await drain(); // second tick: engageQuiet resolves after refreshAsync chain
-			const sets = settings.calls.filter(c => c.op === "set");
-			assert.equal(sets.length, 1);
-			assert.equal(sets[0]?.path, "startup.quiet");
-			assert.equal(sets[0]?.value, true);
-
+			await drain(); // second tick: claim resolves after refreshAsync chain
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[true],
+			);
+			assert.equal(settings.flushed(), 1, "claim must be durable before any exit can happen");
+			assert.deepEqual(readOwnership(), { previous: false, state: "owned" });
 			const latest = h.calls.setWidget.at(-1)?.content as
 				| ((t: unknown, th: unknown) => { render(w: number): string[] })
 				| undefined;
 			assert.ok(latest);
 			const lines = latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n");
-			assert.ok(!lines.includes("set startup.quiet=true"), "advisory must be suppressed");
+			assert.ok(!lines.includes('set "replaceNativeWelcome"'), "advisory suppressed once owned");
 		} finally {
+			dropOwnership();
 			setHostSettingsForTest(null);
 			project.dispose();
 		}
 	});
 
-	it("restores the previous value on session_shutdown", async () => {
-		const project = scratchProject({ greeting: "Ahoy!" });
-		const settings = makeFakeSettings(false);
-		setHostSettingsForTest(settings.fake);
-		try {
-			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
-			await h.sessionStart();
-			await drain();
-			await drain();
-			await h.shutdown();
-			await drain();
-			const sets = settings.calls.filter(c => c.op === "set");
-			assert.deepEqual(
-				sets.map(s => s.value),
-				[true, false],
-			);
-			assert.equal(settings.flushed(), 1, "restore must flush the debounced save");
-		} finally {
-			setHostSettingsForTest(null);
-			project.dispose();
-		}
-	});
-
-	it("never writes when the user already had quiet enabled", async () => {
+	it("never claims when quiet was already true without a marker", async () => {
 		const project = scratchProject({ greeting: "Ahoy!" });
 		const settings = makeFakeSettings(true);
 		setHostSettingsForTest(settings.fake);
@@ -437,45 +425,35 @@ describe("lifecycle: replaceNativeWelcome welcome takeover", () => {
 			await drain();
 			await drain();
 			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
-			await h.shutdown();
-			await drain();
-			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
+			assert.equal(settings.flushed(), 0);
+			assert.equal(readOwnership(), undefined); // user's own preference — never claimed
 		} finally {
+			dropOwnership();
 			setHostSettingsForTest(null);
 			project.dispose();
 		}
 	});
 
-	it("leaves settings untouched when takeover is disabled or the header route wins", async () => {
-		const optedOut = scratchProject({ greeting: "Plain", replaceNativeWelcome: false });
-		const optedOutSettings = makeFakeSettings();
-		setHostSettingsForTest(optedOutSettings.fake);
+	it("steady state: owned marker plus quiet true writes nothing", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(true);
+		seedOwnership(false, "owned");
+		setHostSettingsForTest(settings.fake);
 		try {
-			const h1 = boot({ headerMode: "noop", version: "18.0.1", cwd: optedOut.cwd });
-			await h1.sessionStart();
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
 			await drain();
-			assert.equal(h1.calls.setWidget.length, 0); // nothing mounted at startup…
-			assert.equal(optedOutSettings.calls.length, 0); // …and no settings traffic
-		} finally {
-			optedOut.dispose();
-		}
-
-		const headerRoute = scratchProject({ greeting: "Ahoy!" });
-		const headerSettings = makeFakeSettings();
-		setHostSettingsForTest(headerSettings.fake);
-		try {
-			const h2 = boot({ headerMode: "sync", version: "18.0.1", cwd: headerRoute.cwd });
-			await h2.sessionStart();
 			await drain();
-			assert.ok(h2.calls.setHeader.length > 0); // header route taken
-			assert.equal(headerSettings.calls.length, 0); // Pi owns its own header
+			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
+			assert.deepEqual(readOwnership(), { previous: false, state: "owned" });
 		} finally {
-			headerRoute.dispose();
+			dropOwnership();
 			setHostSettingsForTest(null);
+			project.dispose();
 		}
 	});
 
-	it("restores on dismissal and re-engages with a fresh capture on re-show", async () => {
+	it("dismissal and manual re-show never touch settings while owned", async () => {
 		const project = scratchProject({ greeting: "Ahoy!" });
 		const settings = makeFakeSettings(undefined);
 		setHostSettingsForTest(settings.fake);
@@ -483,58 +461,120 @@ describe("lifecycle: replaceNativeWelcome welcome takeover", () => {
 			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
 			await h.sessionStart();
 			await drain();
-			await drain(); // engage #1: set(true)
-			await h.beforeAgentStart(); // dismiss (unmount) → restore(false) mid-session
 			await drain();
-			assert.deepEqual(
-				settings.calls.filter(c => c.op === "set").map(s => s.value),
-				[true, false],
-				"dismissal must restore while the session is still alive",
-			);
-
+			await h.beforeAgentStart(); // dismiss
+			await drain();
 			const toggle = h.api.commandHandlerNamed("dashboard");
-			await toggle("", h.ctx); // remount → fresh capture (now false) → engage again
+			await toggle("", h.ctx); // re-show
 			await drain();
 			await drain();
-			await h.shutdown(); // dashboard still visible → shutdown releases again
-			await drain();
-			assert.equal(settings.flushed(), 2, "each restore flushes");
 			assert.deepEqual(
 				settings.calls.filter(c => c.op === "set").map(s => s.value),
-				[true, false, true, false],
+				[true],
+				"ownership persists across dismissal; no restore churn",
 			);
+			assert.equal(settings.flushed(), 1);
+			assert.deepEqual(readOwnership(), { previous: false, state: "owned" });
 		} finally {
+			dropOwnership();
 			setHostSettingsForTest(null);
 			project.dispose();
 		}
 	});
 
-	it("does not automount when takeover is disabled; manual /dashboard stacks with advisory", async () => {
-		const project = scratchProject({ greeting: "Manual", replaceNativeWelcome: false });
-		const settings = makeFakeSettings(undefined);
+	it("escape hatch: quiet reset to false underneath us yields permanently", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(false);
+		seedOwnership(false, "owned");
 		setHostSettingsForTest(settings.fake);
 		try {
 			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
 			await h.sessionStart();
 			await drain();
-			assert.equal(h.calls.setWidget.length, 0); // native welcome owns startup
-			assert.equal(settings.calls.length, 0);
-
-			const toggle = h.api.commandHandlerNamed("dashboard");
-			await toggle("", h.ctx); // manual show
 			await drain();
-			assert.equal(h.calls.setWidget.length, 1);
-			const widgetContent = h.calls.setWidget[0]?.content as
+			assert.equal(settings.calls.filter(c => c.op === "set").length, 0, "must not fight the user");
+			assert.deepEqual(readOwnership(), { previous: false, state: "yielded" });
+			const latest = h.calls.setWidget.at(-1)?.content as
 				| ((t: unknown, th: unknown) => { render(w: number): string[] })
 				| undefined;
-			const lines = widgetContent?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
-			assert.ok(lines.includes("Manual"));
-			assert.ok(lines.includes("replaceNativeWelcome"), "stacked show carries the advisory");
-			assert.equal(settings.calls.length, 0); // still fully read-only
+			const lines = latest?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("replaceNativeWelcome"), "yielded stacking carries the advisory");
 
-			await toggle("", h.ctx); // second invocation hides again
-			assert.ok(h.calls.setWidget.some(c => c.content === undefined));
+			const h2 = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h2.sessionStart(); // a later session keeps respecting the yield
+			await drain();
+			await drain();
+			assert.equal(settings.calls.filter(c => c.op === "set").length, 0);
+			assert.deepEqual(readOwnership(), { previous: false, state: "yielded" });
 		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("gives up ownership when takeover is disabled: restores and clears", async () => {
+		const project = scratchProject({ greeting: "Plain", replaceNativeWelcome: false });
+		const settings = makeFakeSettings(true);
+		seedOwnership(false, "owned");
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0); // nothing automounts
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[false],
+			);
+			assert.equal(settings.flushed(), 1, "restore flushes immediately, not at shutdown");
+			assert.equal(readOwnership(), undefined);
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("gives up ownership when config disappears entirely (inert rule)", async () => {
+		const project = scratchProject(undefined);
+		const settings = makeFakeSettings(true);
+		seedOwnership(true, "owned");
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[true],
+				"restores whatever it originally replaced",
+			);
+			assert.equal(readOwnership(), undefined);
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("gives up ownership on a Pi-style header host", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(true);
+		seedOwnership(false, "owned");
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "sync", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			assert.ok(h.calls.setHeader.some(c => c.factory !== undefined));
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[false],
+			);
+			assert.equal(readOwnership(), undefined);
+		} finally {
+			dropOwnership();
 			setHostSettingsForTest(null);
 			project.dispose();
 		}

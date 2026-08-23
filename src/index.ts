@@ -9,29 +9,43 @@
  *     Otherwise take over the native welcome slot (default,
  *     `replaceNativeWelcome: true`): Pi swaps its header component in place so
  *     the dashboard scrolls away like the native header; omp has no stream API,
- *     so it suppresses the built-in welcome via `startup.quiet` and mounts the
- *     widget above the editor. With `replaceNativeWelcome: false` nothing
- *     mounts at startup — the dashboard is manual-only (/dashboard).
+ *     so it claims ownership of `startup.quiet` and mounts the widget above
+ *     the editor. With `replaceNativeWelcome: false` nothing mounts at
+ *     startup — the dashboard is manual-only (/dashboard).
  *   - `before_agent_start`: dismiss-on-first-prompt when configured.
- *   - `session_shutdown`: release a `replaceNativeWelcome` engagement
- *     (restores the previous `startup.quiet` value; the only settings write
- *     this extension performs, and only on omp while mounted by default).
+ *
+ * Quiet ownership (omp family only): while takeover is configured, we keep
+ * `startup.quiet = true` across sessions so every launch renders a single
+ * dashboard instead of a stacked native+custom pair — omp reads the setting
+ * once at boot, before extensions load, so per-session suppression via a
+ * global file is impossible. A marker file records what we replaced:
+ *   - owned: restore + clear whenever a session starts WITHOUT the takeover
+ *     route (config disabled/absent, Pi header host, non-TUI mode). Restores
+ *     happen at session start with an awaited flush — never at shutdown,
+ *     where writes race teardown and get lost (verified live).
+ *   - yielded: the user set `startup.quiet: false` underneath us (escape
+ *     hatch); we stand down permanently until they delete the marker.
+ * The only harness-settings writes remain quiet=true on claim and the
+ * previous value on give-up — both on omp, both gated by the marker.
  */
 
 import { homedir } from "node:os";
 import { makeDashboardComponent } from "./dashboard.ts";
 import { DEFAULT_CONFIG, loadConfig, type DashboardConfig, type LoadedConfig } from "./config.ts";
 import {
+	clearQuietOwnership,
 	fetchBranch,
 	fetchRecentSessions,
 	loadHostSettings,
 	probeHeaderSupport,
+	readQuietOwnership,
 	snapshotInfo,
+	writeQuietOwnership,
 	WIDGET_KEY,
 	type DashboardState,
 } from "./host.ts";
 
-/** Dim line rendered inside the widget whenever we stack beside the built-in welcome on an omp-family host (takeover off, or a manual /dashboard show). Transient notify channels drop content presented around startup, so the hint lives in the widget itself. */
+/** Dim line rendered inside the widget whenever we stack beside the built-in welcome on an omp-family host (takeover off, a manual /dashboard show, or a yielded escape hatch). Transient notify channels drop content presented around startup, so the hint lives in the widget itself. */
 const QUIET_ADVISORY = 'omp-startup: set "replaceNativeWelcome": true to replace the built-in welcome';
 
 type MountMode = "header" | "widget" | null;
@@ -59,16 +73,6 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	let headerCapable: boolean | null = null;
 	let mountMode: MountMode = null;
 	let visible = false;
-	/**
-	 * `replaceNativeWelcome` capture latch (default-on takeover; `false`
-	 * disables it). Holds the pre-existing
-	 * startup.quiet value plus whether WE changed it. Lives from mount until
-	 * the dashboard unmounts (dismiss/toggle-off) or shutdown, so the user's
-	 * original value is captured before our first write and restored exactly
-	 * once per engagement. `wrote=false` (user already had quiet on) means
-	 * release has nothing to restore.
-	 */
-	let quietLatch: { previous: unknown; wrote: boolean } | undefined;
 
 	async function refreshAsync(): Promise<void> {
 		const cwd = stateRef.current.cwd;
@@ -88,11 +92,89 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		}
 	}
 
+	/**
+	 * Take ownership of `startup.quiet` for the omp-family widget route.
+	 * Idempotent across sessions: the marker file, not memory, carries state
+	 * between launches. See the module doc comment for the state machine.
+	 */
+	async function claimQuietOwnership(): Promise<void> {
+		if (!cfgRef.current.replaceNativeWelcome) return;
+		if (headerCapable || stateRef.current.version === "") return; // omp family only
+		const home = homedir();
+		const settings = await loadHostSettings();
+		// Re-validate after the await: the dashboard may have been dismissed or
+		// toggled off, or config reloaded, while we were importing.
+		if (!settings || mountMode !== "widget" || !visible || !cfgRef.current.replaceNativeWelcome) return;
+		const existing = readQuietOwnership(home);
+		if (existing?.state === "yielded") {
+			stackAdvisory(); // escape hatch active: native welcome is back for good
+			return;
+		}
+		const previous = settings.get("startup.quiet") === true;
+		if (previous && !existing) {
+			// quiet was on before we ever engaged — the user's own preference,
+			// not our residue. Ride along visually but never own it, so an
+			// uninstall can never strip their choice.
+			return;
+		}
+		if (previous) return; // owned and already true: steady state, no write
+		if (existing) {
+			// Marker says owned but quiet reads false — the user reset it
+			// deliberately. Yield instead of fighting them every launch.
+			writeQuietOwnership(home, { previous: false, state: "yielded" });
+			stackAdvisory();
+			return;
+		}
+		try {
+			settings.set("startup.quiet", true);
+			// Durable immediately: shutdown-time writes lose a race with host
+			// teardown (verified live), so nothing is deferred to exit.
+			await settings.flush?.();
+		} catch {
+			stackAdvisory(); // could not take over; be honest about the stacking
+			return;
+		}
+		writeQuietOwnership(home, { previous, state: "owned" });
+		stateRef.current.hint = undefined;
+		dash.refresh();
+	}
+
+	function stackAdvisory(): void {
+		stateRef.current.hint = QUIET_ADVISORY;
+		dash.refresh();
+	}
+
+	/**
+	 * Restore `startup.quiet` and drop the marker when a session starts
+	 * without the takeover route (config disabled/absent, Pi header host,
+	 * non-TUI mode). Runs at session start — never at shutdown — so the
+	 * awaited flush always completes while the process is fully alive.
+	 */
+	async function giveUpQuietOwnership(): Promise<void> {
+		const home = homedir();
+		const existing = readQuietOwnership(home);
+		if (!existing) return;
+		if (existing.state === "owned") {
+			const settings = await loadHostSettings();
+			if (!settings) return; // keep marker; a later session or the uninstall script resets
+			try {
+				settings.set("startup.quiet", existing.previous);
+				await settings.flush?.();
+			} catch {
+				return; // keep marker for retry / uninstall script
+			}
+		}
+		clearQuietOwnership(home);
+	}
+
 	function mount(ctx: ExtensionContextSubset): void {
 		if (headerCapable && cfgRef.current.replaceNativeWelcome) {
 			ctx.ui.setHeader(dash.factory);
 			mountMode = "header";
 			stateRef.current.hint = undefined;
+			// Pi route on a machine whose global config we may have claimed
+			// earlier: hand quiet back while the session is fully alive.
+			void giveUpQuietOwnership();
 		} else {
 			ctx.ui.setWidget(WIDGET_KEY, dash.factory, { placement: "aboveEditor" });
 			mountMode = "widget";
@@ -105,45 +187,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 				stackedOmpWelcome && !cfgRef.current.replaceNativeWelcome ? QUIET_ADVISORY : undefined;
 		}
 		visible = true;
-		void engageQuiet();
-	}
-
-	async function engageQuiet(): Promise<void> {
-		if (quietLatch || !cfgRef.current.replaceNativeWelcome) return;
-		if (headerCapable || stateRef.current.version === "") return; // omp family only
-		const settings = await loadHostSettings();
-		// Re-validate after the await: the dashboard may have been dismissed or
-		// toggled off, or config reloaded, while we were importing.
-		if (!settings || mountMode !== "widget" || !visible || !cfgRef.current.replaceNativeWelcome) return;
-		const previous = settings.get("startup.quiet");
-		const wrote = previous !== true;
-		quietLatch = { previous, wrote };
-		if (wrote) {
-			try {
-				settings.set("startup.quiet", true);
-			} catch {
-				quietLatch = undefined; // nothing changed; shutdown must not "restore"
-				return;
-			}
-		}
-		stateRef.current.hint = undefined; // advisory is obsolete once we own the setting
-		dash.refresh();
-	}
-
-	async function releaseQuiet(): Promise<void> {
-		const latch = quietLatch;
-		quietLatch = undefined;
-		if (!latch?.wrote) return;
-		const settings = await loadHostSettings();
-		if (!settings) return;
-		try {
-			settings.set("startup.quiet", latch.previous === true);
-			// set() only arms a debounced save; flushing here keeps the restore
-			// from being lost when the host exits right after teardown.
-			await settings.flush?.();
-		} catch {
-			// Best effort only; a stale true self-heals on the next engaged session.
-		}
+		void claimQuietOwnership();
 	}
 
 	function unmount(ctx: ExtensionContextSubset): void {
@@ -151,10 +195,9 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		else if (mountMode === "widget") ctx.ui.setWidget(WIDGET_KEY, undefined);
 		mountMode = null;
 		visible = false;
-		// Dashboard gone → nothing needs quiet. Restoring mid-session (dismiss
-		// or toggle-off) leaves ample runtime for the debounced save; shutdown
-		// remains a best-effort fallback for sessions that never unmount.
-		void releaseQuiet();
+		// Ownership persists across dismissals by design: restoring has no
+		// visual effect mid-session (omp read the setting at boot), and the
+		// next launch should still render a single clean dashboard.
 	}
 
 	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
@@ -182,7 +225,10 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	});
 
 	api.on("session_start", (_event, ctx) => {
-		if (!ctx.hasUI || ctx.mode !== "tui") return;
+		if (!ctx.hasUI || ctx.mode !== "tui") {
+			void giveUpQuietOwnership();
+			return;
+		}
 		headerCapable = probeHeaderSupport(ctx.ui);
 
 		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, homedir());
@@ -197,7 +243,10 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		// Inert rule: no config files anywhere, or none of them carry a
 		// recognized key → leave every native surface untouched. (The probe
 		// above already restored any header it touched.)
-		if (!loaded || loaded.explicitKeys.size === 0) return;
+		if (!loaded || loaded.explicitKeys.size === 0) {
+			void giveUpQuietOwnership();
+			return;
+		}
 
 		stateRef.current = snapshotInfo(ctx, api);
 		void refreshAsync();
@@ -216,8 +265,13 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		}
 
 		// replaceNativeWelcome:false means the native welcome owns startup; the
-		// dashboard is manual-only (/dashboard).
-		if (cfgRef.current.replaceNativeWelcome) mount(ctx);
+		// dashboard is manual-only (/dashboard). Any quiet we claimed in an
+		// earlier session is returned now, while the process can still flush.
+		if (cfgRef.current.replaceNativeWelcome) {
+			mount(ctx);
+		} else {
+			void giveUpQuietOwnership();
+		}
 	});
 
 	api.on("before_agent_start", (_event, ctx) => {
@@ -225,11 +279,4 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		unmount(ctx);
 	});
 
-	api.on("session_shutdown", async () => {
-		// Awaited on purpose: the host gives shutdown handlers a bounded window
-		// (~2s) before exiting; a detached restore would lose that race.
-		await releaseQuiet();
-		visible = false;
-		mountMode = null;
-	});
 }

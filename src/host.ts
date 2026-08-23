@@ -4,7 +4,8 @@
  * a single dashboard element, never the session.
  */
 
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import type { TokenSnapshot } from "./config.ts";
 
 export const WIDGET_KEY = "omp-startup";
@@ -164,15 +165,16 @@ export async function fetchRecentSessions(cwd: string, count: number): Promise<S
 // ---------------------------------------------------------------------------
 // Host settings access (replaceNativeWelcome takeover)
 // ---------------------------------------------------------------------------
-
-/** Minimal shape of the host SDK settings singleton this extension relies on. */
+/**
+ * Minimal shape of the host SDK settings singleton this extension relies on.
+ */
 export interface HostSettings {
 	get(path: string): unknown;
 	set(path: string, value: unknown): void;
 	/**
-	 * Flushes debounced persistence to disk. Optional: needed when restoring
-	 * during session_shutdown, because a pending 100ms debounced save would
-	 * otherwise be dropped when the host exits.
+	 * Flushes debounced persistence to disk. Optional: every durable write
+	 * this extension performs awaits it, because the host exits immediately
+	 * after teardown and a pending debounced save would be lost.
 	 */
 	flush?(): Promise<void>;
 }
@@ -211,18 +213,83 @@ export async function loadHostSettings(): Promise<HostSettings | undefined> {
 		// Named typed view so members can be inspected; each member is validated
 		// by typeof below before use. (`in` checks are unreliable here: bundled
 		// module-namespace objects may answer `in` falsely for existing props.)
-		const candidate = s as { get?: unknown; set?: unknown };
+		const candidate = s as { get?: unknown; set?: unknown; flush?: unknown };
 		const { get, set } = candidate;
 		if (typeof get !== "function" || typeof set !== "function") {
 			return undefined;
 		}
-		return {
+		const flush =
+			typeof candidate.flush === "function"
+				? async () => {
+						await (candidate.flush as () => Promise<void>)();
+					}
+				: undefined;
+		const wrapped: HostSettings = {
 			get: path => get(path),
 			set: (path, value) => {
 				set(path, value);
 			},
 		};
+		if (flush) wrapped.flush = flush;
+		return wrapped;
 	} catch {
 		return undefined;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Quiet-ownership state file (replaceNativeWelcome takeover bookkeeping)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persistent record of the plugin's relationship to `startup.quiet`.
+ *
+ * - `owned`: we flipped quiet false→true and owe a restore when takeover
+ *   stops (config disabled, config deleted, or host without settings).
+ * - `yielded`: the user reset `startup.quiet` underneath us — an escape
+ *   hatch. We never auto-take again until they delete this file.
+ *
+ * Lives outside the extension directory so it can outlive the install just
+ * long enough for the postuninstall reset script to find it.
+ */
+export interface QuietOwnership {
+	previous: boolean;
+	state: "owned" | "yielded";
+}
+
+function ownershipPath(home: string): string {
+	return join(home, ".config", "dashboard", ".ownership.json");
+}
+
+/** Reads the marker; absent/corrupt/malformed all mean "no record". */
+export function readQuietOwnership(home: string): QuietOwnership | undefined {
+	try {
+		const raw: unknown = JSON.parse(readFileSync(ownershipPath(home), "utf8"));
+		if (typeof raw !== "object" || raw === null) return undefined;
+		const rec = raw as { previous?: unknown; state?: unknown };
+		if ((rec.state !== "owned" && rec.state !== "yielded") || typeof rec.previous !== "boolean") {
+			return undefined;
+		}
+		return { previous: rec.previous, state: rec.state };
+	} catch {
+		return undefined;
+	}
+}
+
+export function writeQuietOwnership(home: string, ownership: QuietOwnership): void {
+	try {
+		mkdirSync(join(home, ".config", "dashboard"), { recursive: true });
+		writeFileSync(ownershipPath(home), `${JSON.stringify(ownership, null, "\t")}\n`);
+	} catch {
+		// Bookkeeping only; losing it means a stale quiet may need the
+		// documented manual reset after uninstall.
+	}
+}
+
+export function clearQuietOwnership(home: string): void {
+	try {
+		unlinkSync(ownershipPath(home));
+	} catch {
+		// Already absent — nothing to clean.
 	}
 }

@@ -76,7 +76,7 @@ always keep these values:
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | quiet takeover + widget above the editor | by default the plugin sets `startup.quiet` while the dashboard shows (previous value restored as soon as it hides); `"replaceNativeWelcome": false` leaves the native welcome untouched and makes the dashboard manual-only |
+| omp | quiet takeover + widget above the editor | by default the plugin owns `startup.quiet` across launches so only the dashboard renders at startup; disabling takeover (or deleting the config) restores the previous value at the next launch; `"replaceNativeWelcome": false` leaves the native welcome untouched and makes the dashboard manual-only |
 | Pi | header replacement in place | by default the dashboard swaps the native header component and scrolls away like it (dismiss restores); `false` keeps the native chrome untouched |
 
 Routing is decided at runtime by probing whether `setHeader` actually works —

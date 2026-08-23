@@ -19,6 +19,7 @@
 		"src",
 		"types.d.ts",
 		"docs",
+		"scripts/uninstall-reset.js",
 		"README.md",
 		"LICENSE"
 	],
@@ -39,7 +40,8 @@
 		"typecheck": "tsc --noEmit",
 		"smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.ts",
 		"test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
-		"prepublishOnly": "npm run typecheck && npm test && npm run smoke"
+		"prepublishOnly": "npm run typecheck && npm test && npm run smoke",
+		"postuninstall": "node scripts/uninstall-reset.js"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",

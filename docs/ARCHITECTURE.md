@@ -26,10 +26,12 @@ Core product contract, enforced in code and tests:
    the native omp `WelcomeComponent`; only explicitly configured keys change
    the render.
 3. **The plugin writes no harness settings** — except the welcome takeover on
-   omp: with `replaceNativeWelcome: true` (the default) it flips `startup.quiet`
-   via the host SDK while the dashboard is mounted and restores the captured
-   previous value when the dashboard hides or at `session_shutdown`. Setting
-   `replaceNativeWelcome: false` makes every code path read-only.
+   omp: with `replaceNativeWelcome: true` (the default) it claims
+   `startup.quiet` via the host SDK and keeps it `true` across launches so
+   only the dashboard renders at startup. Ownership is recorded in a marker
+   file; the previous value is restored (flushed at session start, never at
+   exit) whenever a session starts without the takeover route. Setting
+   `replaceNativeWelcome: false` makes every other code path read-only.
 
 ## 2. Module map
 
@@ -58,13 +60,15 @@ flowchart LR
 ```
 
 - `src/index.ts` — default-exported factory `(api: OmpStartupExtensionAPI) => void`.
-  Registers `/dashboard`, subscribes to `session_start`, `before_agent_start`,
-  `session_shutdown`, owns mount state.
+  Registers `/dashboard`, subscribes to `session_start` and
+  `before_agent_start`, owns mount state plus the quiet-ownership claim/give-up
+  flow.
 - `src/config.ts` — layered JSON loader with explicit-key tracking (drives the
   inert rule), per-key coercion with warnings, token expansion.
 - `src/host.ts` — everything host-shaped: capability probe, info snapshot,
   git branch fetch, recent-sessions fetch (dynamic import of the host package),
-  `loadHostSettings()` (feature-detected settings singleton + test seam).
+  `loadHostSettings()` (feature-detected settings singleton with flush
+  passthrough + test seam), quiet-ownership marker helpers.
 - `src/dashboard.ts` — pure renderer: ANSI-aware width math, gradient painter,
   block builders, box/plain assembly, component factory.
 - `types.d.ts` — ambient declarations for the used API subset; consumed only
@@ -127,15 +131,16 @@ flowchart TD
     G -- yes --> H2["ui.setHeader(dashboard)<br/>in-place header replacement<br/>(dismiss restores)"]
     G -- no --> H["ui.setWidget('omp-startup', …, aboveEditor)"]
     H --> I{"omp-family host?<br/>(!headerCapable && VERSION present)"}
-    I -- yes --> J2["engageQuiet(): set startup.quiet=true<br/>via host settings (previous value latched)"]
+    I -- yes --> J2["claimQuietOwnership(): set + flush startup.quiet=true<br/>(marker records the replaced value)"]
     I -- no --> K["no hint"]
 ```
 
 ## 4. Lifecycle and state machine
 
 Per-session state lives in the factory closure: `headerCapable`, `mountMode`
-(`"header" | "widget" | null`), `visible`, and `quietLatch` (the
-`replaceNativeWelcome` capture, see below).
+(`"header" | "widget" | null`), `visible`. Ownership of `startup.quiet` lives
+outside the process, in `~/.config/dashboard/.ownership.json`, so it survives
+restarts (see below).
 
 ```mermaid
 stateDiagram-v2
@@ -145,9 +150,6 @@ stateDiagram-v2
     Visible --> Hidden : before_agent_start when dismiss enabled
     Hidden --> Visible : dashboard toggle command
     Visible --> Hidden : dashboard toggle command
-    Hidden --> Done : session_shutdown
-    Visible --> Done : session_shutdown
-    Done --> [*]
 ```
 
 - `/dashboard` is always registered, even with no config file — invoking it is
@@ -170,26 +172,39 @@ sequenceDiagram
     S->>R: mount via setWidget or setHeader
 ```
 
-### Welcome takeover (omp, default via `replaceNativeWelcome`)
+### Quiet ownership (omp, default via `replaceNativeWelcome`)
 
-On omp-family hosts the widget route cannot reach the transcript stream, so
-takeover means suppression: `engageQuiet()` fires (detached) right after the
-widget mounts and resolves asynchronously, so a dismissal or toggle during the
-host-package import simply cancels. `replaceNativeWelcome: false` never
-reaches this path. State lives in `quietLatch = { previous, wrote }`, one
-capture per engagement:
+On omp-family hosts the widget route cannot reach the transcript stream, and
+the host reads `startup.quiet` once at boot — before extensions load. Writing
+settings at `session_start` therefore cannot affect the *current* frame; it
+can only shape the next launch. The design embraces that:
 
-- `previous === true` → nothing is ever written and release has nothing to
-  restore (avoids rewriting a user config that already said `quiet: true`).
-- **Primary restore point is unmount** (`before_agent_start` dismissal or
-  `/dashboard` toggle-off): mid-session there is ample runtime for the host's
-  debounced settings save, so the previous value reliably lands on disk.
-- `session_shutdown` additionally awaits `releaseQuiet()` as a fallback for
-  sessions that exit while still mounted. The host bounds shutdown handlers
-  (~2s) before tearing down, and its debounced persistence can lose that race —
-  in that case quiet stays `true` until the next engaged session releases it.
-  Restoring an originally unset key leaves an explicit `false` behind (the SDK
-  has no unset API).
+- **Claim** (`claimQuietOwnership()`, fired after the widget mounts): if quiet
+  is not already `true`, set it and await `flush()` immediately — every
+  durable write happens while the session is fully alive. The marker file then
+  records `{ previous: false, state: "owned" }`.
+- **Steady state**: with quiet already true and the marker owned, launches do
+  zero settings I/O; only the dashboard renders at startup.
+- **Never claim what we did not replace**: quiet `true` without a marker is
+  the user's own preference. The plugin rides along visually but writes no
+  marker, so an uninstall can never strip their choice.
+- **Give-up** (`giveUpQuietOwnership()`): whenever a session starts *without*
+  the takeover route — takeover disabled, config deleted (inert rule), a
+  Pi-style header host, or non-TUI mode — restore the recorded previous value
+  and clear the marker. Restores flush at session start by construction;
+  exit-time restores are gone because they raced host teardown and lost
+  (verified live on omp 18.0.3: a plain `/exit` while mounted left
+  `quiet: true` behind under the old latch design).
+- **Escape hatch**: if quiet reads `false` while the marker says owned, the
+  user overrode us. Rewrite the marker as `yielded`, stack beside the native
+  welcome with the advisory hint, and never claim again until they delete the
+  marker.
+- Restoring an originally unset key leaves an explicit
+  `startup.quiet: false` behind (the SDK has no unset API) — semantically
+  identical to the default.
+- `scripts/uninstall-reset.js` (npm `postuninstall`) performs the same
+  restore when npm removes an owned install; omp's bun-based uninstaller may
+  skip lifecycle scripts, so the manual reset stays documented in USAGE.md.
 
 ## 5. Configuration pipeline
 
@@ -276,16 +291,28 @@ Documented deliberately; none affect the inert rule.
 
 | Layer | Mechanism |
 |---|---|
-| Unit | `node --test tests/*.test.ts` — 103 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, dismiss/toggle/shutdown hygiene |
-| Smoke | `scripts/smoke.ts` — 39 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, settings seam) |
+| Unit | `node --test tests/*.test.ts` — 111 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, ownership-marker round-trip, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up |
+| Smoke | `scripts/smoke.ts` — 44 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, quiet-ownership seam) |
 | Types | `tsc --noEmit` strict, including `tests/` |
-| Live | PTY-driven omp 18.0.3 sessions (configured frame with quiet takeover, prompt-dismissal restore, `/dashboard` re-show, opted-out manual show) |
+| Live | PTY-driven omp 18.0.3 sessions (configured frame, resume parity with/without plugin, opted-out manual show, leak-reproduction and post-leak bare-resume) |
 
 Live results recorded for the shipped build:
 
-- omp: stock welcome untouched when unconfigured; with config the dashboard
-  engages quiet (`startup.quiet: true`) and renders above the editor; dismissed
-  after first prompt (quiet restored mid-session); `/dashboard` restored it;
-  recent-sessions rows populated from the host API.
+- omp launch (sandboxed `$HOME`, only the repo symlink loaded): with no prior
+  state the very first engaged launch can stack native welcome + dashboard
+  (the claim lands after the host's boot-time read); every later launch
+  renders only the dashboard above the editor, `startup.quiet` owned via the
+  marker. Verified across consecutive sandboxed launches.
+- omp `--continue` (with and without the plugin, identical sandbox):
+  natively the "Welcome back!" box renders at top with the transcript below;
+  with the plugin it renders exactly the same, plus the dashboard directly
+  above the input line. omp's `session_start` carries no resume reason, so
+  resumed sessions intentionally behave like fresh ones.
+- opted-out (`replaceNativeWelcome: false`): native frame untouched, nothing
+  mounted, settings read-only; `/dashboard` stacks with the advisory.
+- Leak reproduction under the previous latch design (kept as regression
+  rationale): `/exit` while still mounted lost the restore write → next
+  launch showed no welcome at all; with the plugin removed the editor sat
+  bare. The ownership model eliminates exit-time writes entirely.
 - pi: dashboard replaces the native header where the probe passes; no
   omp-specific hint; dismissal and `/dashboard` identical.

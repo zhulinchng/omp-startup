@@ -34,7 +34,13 @@ pi install -l npm:omp-startup         # Pi, project-local → .pi/settings.json 
 - **Update:** rerun the same command; add `--force` on omp to reinstall over
   an existing copy.
 - **Remove:** `omp plugin uninstall omp-startup` / `pi remove omp-startup`.
-- The plugin stores no state; removal restores the previous welcome exactly.
+- The plugin keeps one bookkeeping file on omp —
+  `~/.config/dashboard/.ownership.json` — recording when it has taken over
+  `startup.quiet`. If a session ever exits before the marker is cleaned up,
+  remove it and set `startup.quiet: false` under the `startup:` section of
+  `~/.omp/agent/config.yml` to bring the native welcome back. npm-based
+  uninstalls run `scripts/uninstall-reset.js`, which does this automatically
+  whenever the plugin actually owned the value.
 
 > **Pi note:** `pi install` records the package in
 > `~/.pi/agent/settings.json` under `packages` and unpacks it to
@@ -117,7 +123,7 @@ Save as `.omp/dashboard.json` (omp projects), `.pi/dashboard.json`
 | `quote` | string \| string[] | `[]` | stable pick rendered dim/italic below the box; rotates through the list daily |
 | `dismiss` | boolean | `true` | hide after the first submitted prompt |
 | `command` | string | `"dashboard"` | slash-command name (letters/digits/`_`/`-`) |
-| `replaceNativeWelcome` | boolean | `true` | take over the native welcome slot: Pi swaps its header component in place (the dashboard scrolls away like the native one); omp sets `startup.quiet` while the dashboard shows (previous value restored when it hides) |
+| `replaceNativeWelcome` | boolean | `true` | take over the native welcome slot: Pi swaps its header component in place (the dashboard scrolls away like the native one); on omp the plugin takes ownership of `startup.quiet` across launches so only the dashboard renders at startup (previous value restored automatically if takeover is ever disabled) |
 
 Blocks: `greeting` · `logo` · `blank` · `info` · `shortcuts` · `sessions`.
 A block named in both columns renders once, on the left.
@@ -150,29 +156,35 @@ through untouched.
 flowchart TD
     S["Launch with a dashboard.json present"] --> R{"replaceNativeWelcome?<br/>(default true)"}
     R -- "yes, header-capable host<br/>(Pi builds where the header exists first)" --> T["Dashboard replaces the native header in place<br/>dismiss restores it"]
-    R -- "yes, omp-style host" --> J["startup.quiet=true via host settings +<br/>dashboard widget above the editor<br/>(restored when the dashboard hides)"]
+    R -- "yes, omp-style host" --> J["startup.quiet=true via host settings +<br/>dashboard widget above the editor<br/>(owned until takeover is disabled)"]
     R -- no --> M["Nothing mounted at launch:<br/>native welcome untouched;<br/>/dashboard shows the widget on demand"]
 ```
 
 | Host | Route | Native welcome |
 |---|---|---|
-| omp | quiet takeover + widget above the editor | with the default `replaceNativeWelcome: true` the plugin flips `startup.quiet` for the session (previous value restored as soon as the dashboard hides); with `false` nothing mounts at launch and the dashboard is manual-only |
+| omp | quiet takeover + widget above the editor | with the default `replaceNativeWelcome: true` the plugin takes ownership of `startup.quiet` across launches, so only the dashboard renders at startup; turning takeover off (or deleting the config) hands the previous value back at the next launch; with `false` nothing mounts at launch and the dashboard is manual-only |
 | Pi (0.84.x) | header replacement in place | with the default, the dashboard replaces the native header component and scrolls away like it; engages on builds where the header already exists at `session_start`; `false` leaves the native chrome untouched |
 
 `replaceNativeWelcome` notes (omp):
 
-- The host reads `startup.quiet` once at launch, so the very first engaged
-  launch can still show both boxes; from the next launch only your dashboard
-  renders.
+- The host reads `startup.quiet` once at boot, before extensions load — so no
+  extension can suppress the native welcome for the *current* session by
+  writing settings. Instead the plugin claims ownership: while takeover is
+  configured, quiet stays `true` between launches and only your dashboard
+  renders at startup.
 - The write goes to the user-global omp settings file, so a concurrently
-  running omp in another project sees quiet mode too while your dashboard is
-  up. The previous value is restored as soon as the dashboard hides (first
-  prompt with `dismiss: true`, or `/dashboard` toggle-off).
-- Exiting while the dashboard is still on screen restores at shutdown; that
-  late write can lose the race against process exit, leaving quiet on until
-  the next session that shows the dashboard releases it. A hard kill
-  (SIGKILL/power loss) behaves the same way.
-- When the previous value was unset, restoring leaves an explicit
+  running omp in another project sees quiet mode too.
+- Ownership is recorded in `~/.config/dashboard/.ownership.json`. When a
+  session starts without the takeover route (takeover set to `false`, config
+  deleted entirely, or a Pi-style header host), the previous value is
+  restored with an immediately flushed write at session start — never at
+  exit, where restore writes used to race process teardown and get lost.
+- Escape hatch: set `startup.quiet: false` yourself in
+  `~/.omp/agent/config.yml`. At its next launch the plugin detects the
+  override, yields permanently (native welcome back; `/dashboard` shows the
+  widget stacked beside it with an advisory), and never touches the key again
+  until you delete the marker file.
+- When the previous value was unset, giving ownership back leaves an explicit
   `startup.quiet: false` behind — semantically identical to the default.
 
 With `replaceNativeWelcome: false` the plugin never edits settings itself; a
@@ -181,9 +193,9 @@ one-line hint pointing back at the setting, disappearing together with the
 dashboard.
 
 The plugin writes harness settings in exactly one case: on omp with
-`replaceNativeWelcome: true` (the default), flipping/restoring the single
-`startup.quiet` value described above. Setting it `false` makes every code
-path read-only.
+`replaceNativeWelcome: true` (the default), it claims the single
+`startup.quiet` value described above and restores it when takeover stops.
+Setting it `false` makes every code path read-only.
 
 ### Honest deviations from the native look
 
@@ -203,15 +215,15 @@ path read-only.
 | Dashboard missing on Pi | Pi may have asked whether to trust the project directory — answer once; or move the extension to `~/.pi/agent/extensions` |
 | Sessions list empty | The sessions fetch degrades silently when the host API is unavailable; recent sessions appear once the host exposes them |
 | Wrong colors in the logo | Terminal lacks truecolor; set `"gradient": false` |
+| Native welcome missing on omp after uninstalling | A takeover latched `startup.quiet: true`; set it to `false` under the `startup:` section of `~/.omp/agent/config.yml` (npm-based uninstalls run the reset automatically whenever the plugin owned the value) |
+| Want the native welcome back while keeping the plugin | Set `startup.quiet: false` in `~/.omp/agent/config.yml`; the plugin yields at its next launch and stops managing the key (delete `~/.config/dashboard/.ownership.json` to let it take over again) |
 
 Invalid values never break the session: the loader falls back to the default
 for that key and surfaces one warning naming the offending file.
 
-## Verify your setup
-
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
-npm run smoke      # inert/render-delta/probe/token/seam assertions (39 checks)
-npm test           # 103-assertion suite (node:test, zero extra deps)
+npm run smoke      # inert/render-delta/probe/token/seam assertions (44 checks)
+npm test           # 111-assertion suite (node:test, zero extra deps)
 ```
