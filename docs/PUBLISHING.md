@@ -52,7 +52,7 @@ Post-publish verification (see below) before announcing.
 
 - First publish of `0.x`: treat minor bumps as breaking-allowed (semver
   §4), major for the eventual stable line.
-- Hosts cache installed copies (`~/.omp/agent/plugins/node_modules/`,
+- Hosts cache installed copies (`~/.omp/plugins/node_modules/`,
   Pi's settings-managed store). Consumers only see an update after rerunning
   their host's install command — bump versions deliberately.
 
@@ -66,7 +66,7 @@ npm view omp-startup version          # matches the just-published version
 
 mkdir -p /tmp/startup-verify/.omp && cd /tmp/startup-verify
 echo '{ "greeting": "Publish check" }' > .omp/dashboard.json
-omp plugin install omp-startup        # installs to ~/.omp/agent/plugins
+omp plugin install omp-startup        # needs bun on $PATH; installs to ~/.omp/plugins
 omp                                   # dashboard renders "Publish check"; /dashboard toggles
 ```
 
@@ -78,12 +78,12 @@ a project for project-local scope). Clean up afterwards:
 
 | | omp | Pi |
 |---|---|---|
-| Install | `omp plugin install omp-startup` | `pi install npm:omp-startup` |
+| Install | `omp plugin install omp-startup` (needs `bun` on `$PATH`) | `pi install npm:omp-startup` |
 | Project-local | `<project>/.omp/plugins` via project anchor | `pi install -l npm:omp-startup` |
 | Update | rerun install (add `--force`) | rerun install |
 | Remove | `omp plugin uninstall omp-startup` | `pi remove omp-startup` |
 | Inspect | `omp plugin list` | `pi list` |
-| Files land in | `~/.omp/agent/plugins/node_modules/<pkg>` | settings.json `extensions` entry |
+| Files land in | `~/.omp/plugins/node_modules/<pkg>`, registered via that dir's `package.json#dependencies` ∪ `omp-plugins.lock.json` | `~/.pi/agent/settings.json` `packages` array → unpacked to `~/.pi/agent/npm/node_modules/` |
 | Source checkout | symlink into `~/.omp/agent/extensions/` | symlink into `~/.pi/agent/extensions/` |
 
 Config file layers (`<cwd>/.omp/dashboard.json` → `.pi/` fallback →

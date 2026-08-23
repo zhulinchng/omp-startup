@@ -13,7 +13,7 @@ plugin never writes harness settings.
 From npm (recommended — both hosts ship native installers):
 
 ```sh
-omp plugin install omp-startup      # Oh My Pi, user-level (~/.omp/agent/plugins)
+omp plugin install omp-startup      # Oh My Pi, user-level (~/.omp/plugins)
 pi install npm:omp-startup          # upstream Pi, user-level; add -l for project-local
 ```
 

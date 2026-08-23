@@ -24,19 +24,21 @@ Both hosts ship native installers that fetch from the npm registry and load
 the package via its manifest:
 
 ```sh
-omp plugin install omp-startup        # Oh My Pi → ~/.omp/agent/plugins
-pi install npm:omp-startup            # Pi, user-level → settings.json extensions
-pi install -l npm:omp-startup         # Pi, project-local → .pi/settings.json
+omp plugin install omp-startup        # Oh My Pi → ~/.omp/plugins/node_modules
+pi install npm:omp-startup            # Pi, user-level
+pi install -l npm:omp-startup         # Pi, project-local → .pi/settings.json packages
 ```
 
-- **Update:** rerun the same command (fetches the latest published version).
-  omp: `omp plugin uninstall omp-startup` first if versions are cached.
-
+- **omp requirement:** the native installer shells out to `bun install`; bun
+  must be on `$PATH`. Without it, use the source-checkout symlink path below.
+- **Update:** rerun the same command; add `--force` on omp to reinstall over
+  an existing copy.
 - **Remove:** `omp plugin uninstall omp-startup` / `pi remove omp-startup`.
 - The plugin stores no state; removal restores the previous welcome exactly.
 
 > **Pi note:** `pi install` records the package in
-> `settings.json#extensions`; `pi list` shows what's registered.
+> `~/.pi/agent/settings.json` under `packages` and unpacks it to
+> `~/.pi/agent/npm/node_modules/`; `pi list` shows what's registered.
 
 ### From a source checkout
 
