@@ -39,6 +39,35 @@ Configure by dropping a JSON file:
 | Project | `<cwd>/.omp/dashboard.json` or `<cwd>/.pi/dashboard.json` (first that exists) |
 | User | `~/.config/dashboard/config.json` |
 
+Every option with its default value — copy what you need; keys you omit
+always keep these values:
+
+```json
+{
+  "layout": "box",
+  "title": "{app} v{version}",
+  "width": 100,
+  "logo": "pi",
+  "gradient": true,
+  "greeting": "Welcome back!",
+  "left": ["greeting", "blank", "logo", "blank", "info"],
+  "right": ["shortcuts", "sessions"],
+  "info": ["{model}", "{provider}"],
+  "shortcuts": [
+    { "key": "#", "label": "for prompt actions" },
+    { "key": "/", "label": "for commands" },
+    { "key": "!", "label": "to run bash" },
+    { "key": "$", "label": "to run python" }
+  ],
+  "sessions": 4,
+  "quote": [],
+  "dismiss": true,
+  "command": "dashboard",
+  "replaceHeader": false
+}
+```
+
+
 `/dashboard` toggles it at any time. On first submitted prompt it hides
 (`"dismiss": true`). Full option list, tokens, recipes, troubleshooting:
 **[docs/USAGE.md](docs/USAGE.md)**.
@@ -69,8 +98,8 @@ no version sniffing; if either host changes, the plugin adapts.
 ```sh
 npm install         # dev-only tooling
 npm run typecheck   # strict tsc --noEmit (src + scripts + tests)
-npm run smoke       # 35 host-free render/probe/token assertions
-npm test            # 85-assertion suite on node:test
+npm run smoke       # 40 host-free render/probe/token assertions
+npm test            # 95-assertion suite on node:test
 ```
 
 Zero runtime dependencies; hosts load the TypeScript sources as-is.
