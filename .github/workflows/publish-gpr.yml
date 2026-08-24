@@ -19,7 +19,22 @@ permissions:
   packages: write
 
 jobs:
+  # Explicit gate: the full suite must pass before anything is published.
+  test:
+    name: Gates (typecheck · test · smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --no-fund --no-audit
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run smoke
+
   publish-gpr:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +47,7 @@ jobs:
         run: npm ci --no-fund --no-audit
       - name: Scope the package name for the GitHub registry
         run: npm pkg set name=@zhulinchng/omp-startup
-      - name: Publish (prepublishOnly re-runs typecheck + tests + smoke)
+      - name: Publish (prepublishOnly re-runs the gates as defense)
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
