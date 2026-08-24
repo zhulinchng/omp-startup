@@ -6,7 +6,7 @@ name: Publish to GitHub Packages
 # @zhulinchng/omp-startup (the unscoped omp-startup stays on npmjs).
 #
 # Runs automatically when a GitHub Release is published, or manually from the
-:# Actions tab. Registry versions are immutable: a run whose version is
+# Actions tab. Registry versions are immutable: a run whose version is
 # already published skips the publish step with a warning instead of failing.
 
 on:
