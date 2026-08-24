@@ -41,10 +41,23 @@ Every release:
 3. Publish. The `prepublishOnly` script re-runs typecheck + full test suite +
    smoke suite as a gate; it aborts the publish on any failure:
    ```sh
-   npm publish         # enter OTP when prompted
+   npm publish         # browser-auth flow: press ENTER at the prompt, then
+                       # approve in the opened npmjs.com tab (2FA)
    ```
-4. Inspect what would ship before the real publish with
+4. Push the version commit and tag, then cut the matching GitHub release so
+   the npm page and the repo releases link to each other:
+   ```sh
+   git push origin main --follow-tags
+   gh release create vX.Y.Z --title "vX.Y.Z" \
+     --notes "**npm:** [omp-startup@X.Y.Z](https://www.npmjs.com/package/omp-startup/v/X.Y.Z)"
+   ```
+5. Inspect what would ship before the real publish with
    `npm publish --dry-run` (tarball contents are listed).
+
+Publishing with the `pi-package` keyword (set in `package.json`) lists the
+package in the Pi gallery at <https://pi.dev/packages> automatically; the
+entry renders the README verbatim, so keep its counts current before
+publishing.
 
 Post-publish verification (see below) before announcing.
 
