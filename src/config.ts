@@ -184,7 +184,7 @@ function coerceBlocks(file: string, key: string, value: unknown, fallback: Block
 			warnings.push(`${file || "(config)"}: "${key}" contains unknown block ${JSON.stringify(entry)}; skipped`);
 		}
 	}
-	return blocks.length > 0 ? blocks : fallback;
+	return blocks;
 }
 
 function coerceStrings(file: string, key: string, value: unknown, fallback: string[], warnings: string[]): string[] {
@@ -219,7 +219,7 @@ function coerceShortcuts(file: string, value: unknown, fallback: ShortcutHint[],
 			warnings.push(`${file || "(config)"}: "shortcuts" contains an invalid entry; skipped`);
 		}
 	}
-	return hints.length > 0 ? hints : fallback;
+	return hints;
 }
 
 function coerceCommand(file: string, value: unknown, fallback: string, warnings: string[]): string {

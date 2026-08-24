@@ -84,8 +84,8 @@ export function resetOwnedQuiet(home) {
 		try {
 			writeFileSync(configPath, lines.join("\n"));
 		} catch {
-			// Keep trying nowhere — uninstall proceeds; docs cover manual reset.
-			clearMarker();
+			// Keep the marker: a later rerun (or a live plugin's give-up) can
+			// still repair; losing it would strand quiet:true with no record.
 			return "write-failed";
 		}
 		clearMarker();
@@ -99,7 +99,7 @@ const OUTCOME_NOTES = {
 	"no-marker": undefined,
 	"not-owned": "ownership marker was not ours; nothing to reset",
 	"config-missing": "no agent config found; nothing to reset",
-	"write-failed": "could not write agent config; reset startup.quiet manually",
+	"write-failed": "could not write agent config; marker kept - fix permissions and rerun, or reset startup.quiet manually",
 	restored: "restored startup.quiet to its previous value",
 	"preserved-true": "previous value was quiet:true; left as-is",
 	"already-default": "no startup.quiet=true found (already default)",

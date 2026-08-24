@@ -4,7 +4,7 @@
  * scratch homes; every path must be non-throwing and leave no owned marker.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -96,5 +96,21 @@ describe("uninstall reset hook", () => {
 		seed(home, { previous: false, state: "owned" }, undefined);
 		assert.equal(resetOwnedQuiet(home), "config-missing");
 		assert.equal(existsSync(markerOf(home)), false);
+	});
+
+	it("keeps the marker when writing the config fails (retryable)", () => {
+		if (process.getuid?.() === 0) return; // root ignores permission bits
+		const home = scratch();
+		seed(home, { previous: false, state: "owned" }, "startup:\n  quiet: true\n");
+		chmodSync(configOf(home), 0o444); // read-only file → in-place write fails
+		try {
+			assert.equal(resetOwnedQuiet(home), "write-failed");
+			assert.match(readFileSync(configOf(home), "utf8"), /quiet: true/); // untouched
+			assert.equal(existsSync(markerOf(home)), true, "marker kept for a later rerun");
+			const marker = JSON.parse(readFileSync(markerOf(home), "utf8")) as { state: string };
+			assert.equal(marker.state, "owned");
+		} finally {
+			chmodSync(configOf(home), 0o644);
+		}
 	});
 });

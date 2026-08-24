@@ -93,13 +93,18 @@ function truncateToWidth(text: string, width: number): string {
 	let out = "";
 	let used = 0;
 	let inEscape = false;
-	for (const char of text) {
+	const chars = Array.from(text);
+	for (let i = 0; i < chars.length; i++) {
+		const char = chars[i];
+		if (char === undefined) break;
 		if (inEscape) {
 			out += char;
 			if (char === "m") inEscape = false;
 			continue;
 		}
-		if (char === "\x1b") {
+		// Only a well-formed CSI intro (\x1b[) opens an SGR run — a lone ESC
+		// is ordinary content, matching visibleWidth/plainText.
+		if (char === "\x1b" && chars[i + 1] === "[") {
 			inEscape = true;
 			out += char;
 			continue;

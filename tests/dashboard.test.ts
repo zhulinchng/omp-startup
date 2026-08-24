@@ -239,6 +239,26 @@ describe("dashboard: wide-character geometry (regression: code-point widths)", (
 	});
 });
 
+describe("dashboard: lone-ESC handling (regression: truncation/width agreement)", () => {
+	it("treats a bare escape character as ordinary content when truncating", () => {
+		const lines = renderDashboard(
+			{
+				...DEFAULT_CONFIG,
+				left: ["greeting"],
+				right: [],
+				logo: "none",
+				width: 20,
+				greeting: `${"a".repeat(16)}\x1bbb`,
+			},
+			makeState(),
+			PLAIN_THEME,
+			100,
+		);
+		const widths = new Set(stripAll(lines).map(l => visibleWidth(l)));
+		assert.equal(widths.size, 1, `ragged cells: ${[...widths].join(",")}`);
+	});
+});
+
 describe("dashboard: styled truncation (regression: SGR loss)", () => {
 	it("keeps color codes when a themed line overflows and is truncated", () => {
 		const styledTheme: DashboardTheme = {

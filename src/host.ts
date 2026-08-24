@@ -95,13 +95,19 @@ export async function fetchBranch(api: OmpStartupExtensionAPI): Promise<string> 
 	try {
 		const result = await api.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
 		if (result.code !== 0) return "";
-		return result.stdout.trim();
+		const ref = result.stdout.trim();
+		if (ref !== "" && ref !== "HEAD") return ref;
+		// Detached HEAD: --abbrev-ref prints the literal "HEAD"; the short
+		// commit hash is the honest stand-in.
+		const sha = await api.exec("git", ["rev-parse", "--short", "HEAD"]);
+		return sha.code === 0 ? sha.stdout.trim() : "";
 	} catch {
 		return "";
 	}
 }
 
 function formatTimeAgo(then: Date): string {
+	if (!Number.isFinite(then.getTime())) return "unknown";
 	const seconds = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
 	if (seconds < 60) return "just now";
 	const minutes = Math.floor(seconds / 60);
@@ -276,13 +282,14 @@ export function readQuietOwnership(home: string): QuietOwnership | undefined {
 	}
 }
 
-export function writeQuietOwnership(home: string, ownership: QuietOwnership): void {
+export function writeQuietOwnership(home: string, ownership: QuietOwnership): boolean {
 	try {
 		mkdirSync(join(home, ".config", "dashboard"), { recursive: true });
 		writeFileSync(ownershipPath(home), `${JSON.stringify(ownership, null, "\t")}\n`);
+		return true;
 	} catch {
-		// Bookkeeping only; losing it means a stale quiet may need the
-		// documented manual reset after uninstall.
+		// Callers decide what losing the record means; see claim's rollback.
+		return false;
 	}
 }
 

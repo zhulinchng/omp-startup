@@ -370,6 +370,21 @@ describe("lifecycle: /dashboard toggle", () => {
 			project.dispose();
 		}
 	});
+
+	it("ignores invocations outside an interactive TUI context", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			const toggle = h.api.commandHandlerNamed("dashboard");
+			await toggle("", { ...h.ctx, hasUI: false, mode: "json" });
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.setHeader.length, 0);
+			await toggle("", h.ctx); // a real TUI invocation still mounts
+			assert.equal(h.calls.setWidget.length, 1);
+		} finally {
+			project.dispose();
+		}
+	});
 });
 
 describe("lifecycle: session hygiene", () => {
@@ -663,6 +678,35 @@ describe("lifecycle: replaceNativeWelcome quiet ownership", () => {
 			await drain();
 			await drain();
 			assert.deepEqual(readOwnership(), { previous: false, state: "owned" });
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("rolls back the claim when the ownership marker cannot be written", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		mkdirSync(ownershipDir(), { recursive: true });
+		mkdirSync(ownershipFile()); // a directory at the marker path → every write fails
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[true, false],
+				"claim must be undone when its record is lost",
+			);
+			assert.equal(readOwnership(), undefined);
+			const content = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = content?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("replaceNativeWelcome"), "lost marker admits the stacking");
 		} finally {
 			dropOwnership();
 			setHostSettingsForTest(null);

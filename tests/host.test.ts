@@ -147,6 +147,29 @@ describe("fetchBranch", () => {
 		};
 		assert.equal(await fetchBranch(mock.api), "");
 	});
+
+	it("falls back to the short hash on a detached HEAD", async () => {
+		const mock = makeMockApi();
+		mock.api.exec = async (_command: string, args: string[]) => {
+			mock.execCalls.push({ command: "git", args });
+			return args.includes("--abbrev-ref")
+				? { stdout: "HEAD\n", stderr: "", code: 0 }
+				: { stdout: "160ed43\n", stderr: "", code: 0 };
+		};
+		assert.equal(await fetchBranch(mock.api), "160ed43");
+		assert.equal(mock.execCalls.length, 2);
+		assert.deepEqual(mock.execCalls[1]?.args, ["rev-parse", "--short", "HEAD"]);
+	});
+
+	it("returns empty when the detached-HEAD fallback also fails", async () => {
+		const mock = makeMockApi();
+		mock.api.exec = async (_command: string, args: string[]) => {
+			return args.includes("--abbrev-ref")
+				? { stdout: "HEAD\n", stderr: "", code: 0 }
+				: { stdout: "", stderr: "error", code: 1 };
+		};
+		assert.equal(await fetchBranch(mock.api), "");
+	});
 });
 
 describe("mapSessionInfos (host shape tolerance)", () => {
@@ -170,6 +193,11 @@ describe("mapSessionInfos (host shape tolerance)", () => {
 			{ ...base },
 		]);
 		assert.deepEqual(rows.map(r => r.name), ["title-wins", "name-wins", "abc.json"]);
+	});
+
+	it("renders an invalid date as unknown instead of NaN", () => {
+		const rows = mapSessionInfos([{ ...base, modified: new Date(Number.NaN) }]);
+		assert.equal(rows[0]?.timeAgo, "unknown");
 	});
 });
 

@@ -291,7 +291,7 @@ Documented deliberately; none affect the inert rule.
 
 | Layer | Mechanism |
 |---|---|
-| Unit | `node --test tests/*.test.ts` — 122 assertions: inert rule, layers, coercion, tokens, geometry invariants, delta rendering, probe classification, ownership-marker round-trip, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure and no-settings honesty, unconfigured read-only toggles |
+| Unit | `node --test tests/*.test.ts` — 131 assertions: inert rule, layers, coercion incl. explicit-empty arrays, tokens, geometry invariants, lone-ESC truncation, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured read-only toggles |
 | Smoke | `scripts/smoke.ts` — 44 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, quiet-ownership seam) |
 | Types | `tsc --noEmit` strict, including `tests/` |
 | Live | PTY-driven omp 18.0.3 sessions (configured frame, resume parity with/without plugin, opted-out manual show, leak-reproduction and post-leak bare-resume) |

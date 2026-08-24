@@ -223,11 +223,13 @@ Setting it `false` makes every code path read-only.
 | Want the native welcome back while keeping the plugin | Set `startup.quiet: false` in `~/.omp/agent/config.yml`; the plugin yields at its next launch and stops managing the key (delete `~/.config/dashboard/.ownership.json` to let it take over again) |
 
 Invalid values never break the session: the loader falls back to the default
-for that key and surfaces one warning naming the offending file.
+for that key and surfaces one warning naming the offending file. An explicitly
+configured empty array (`"left": []`, `"shortcuts": []`) is valid, not
+invalid — it renders no blocks/hints instead of reverting to the defaults.
 
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
 npm run smoke      # inert/render-delta/probe/token/seam assertions (44 checks)
-npm test           # 122-assertion suite (node:test, zero extra deps)
+npm test           # 131-assertion suite (node:test, zero extra deps)
 ```

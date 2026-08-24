@@ -76,7 +76,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 122 passing
+npm test            # node --test tests/*.test.ts — expect 131 passing
 npm run smoke       # node scripts/smoke.ts — expect 44 "ok" lines, exit 0
 ```
 
@@ -140,12 +140,17 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 - Runner: `node:test` `describe`/`it` with `node:assert/strict`. Zero third-party
   test deps. New file `tests/<module>.test.ts` matching a src module name is
   picked up automatically by the glob.
-- Suite map: `config.test.ts` (23 — inert rule, layers, coercion, tokens),
-  `dashboard.test.ts` (34 — parity, delta rendering, geometry sweep),
-  `host.test.ts` (26 — probe/fetch/settings-seam classification, ownership-marker round-trip),
-  `lifecycle.test.ts` (32 — omp vs pi routing through mock hosts, quiet
-  claim/steady-state/escape-hatch/give-up incl. failure paths),
-  `uninstall-reset.test.ts` (7 — postuninstall restore outcomes). Total 122.
+- Suite map: `config.test.ts` (25 — inert rule, layers, coercion incl.
+  explicit-empty arrays, tokens),
+  `dashboard.test.ts` (35 — parity, delta rendering, geometry sweep, lone-ESC
+  truncation),
+  `host.test.ts` (29 — probe/fetch/settings-seam classification,
+  detached-HEAD fetch, ownership-marker round-trip),
+  `lifecycle.test.ts` (34 — omp vs pi routing through mock hosts, quiet
+  claim/steady-state/escape-hatch/give-up incl. failure paths and non-TUI
+  toggles),
+  `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
+  write-failure marker retention). Total 131.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

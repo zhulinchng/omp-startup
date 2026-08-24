@@ -225,12 +225,13 @@ describe("config: coercion and warnings", () => {
 		}
 	});
 
-	it("filters unknown block names and falls back when nothing valid remains", () => {
+	it("filters unknown block names, keeping the remainder even when empty", () => {
 		const partial = withDirs({ project: { left: ["greeting", "nope"] as never } });
 		try {
 			const loaded = loadConfig(partial.cwd, partial.home);
 			assert.ok(loaded);
 			assert.deepEqual(loaded.cfg.left, ["greeting"]);
+			assert.ok(loaded.warnings.some(w => w.includes('"left"')));
 		} finally {
 			partial.dispose();
 		}
@@ -238,7 +239,8 @@ describe("config: coercion and warnings", () => {
 		try {
 			const loaded = loadConfig(garbage.cwd, garbage.home);
 			assert.ok(loaded);
-			assert.deepEqual(loaded.cfg.left, DEFAULT_CONFIG.left);
+			assert.deepEqual(loaded.cfg.left, []);
+			assert.equal(loaded.warnings.length, 1);
 		} finally {
 			garbage.dispose();
 		}
@@ -270,12 +272,13 @@ describe("config: coercion and warnings", () => {
 		}
 	});
 
-	it("falls back to default shortcuts when none survive", () => {
+	it("keeps configured shortcuts empty when no entry survives", () => {
 		const fx = withDirs({ project: { shortcuts: [42] as never } });
 		try {
 			const loaded = loadConfig(fx.cwd, fx.home);
 			assert.ok(loaded);
-			assert.deepEqual(loaded.cfg.shortcuts, DEFAULT_CONFIG.shortcuts);
+			assert.deepEqual(loaded.cfg.shortcuts, []);
+			assert.equal(loaded.warnings.length, 1);
 		} finally {
 			fx.dispose();
 		}
@@ -317,6 +320,35 @@ describe("config: coercion and warnings", () => {
 			assert.ok(loaded.warnings.some(w => w.includes('"replaceNativeWelcome"')));
 		} finally {
 			bad.dispose();
+		}
+	});
+
+	it("honors explicit empty arrays instead of reverting to defaults", () => {
+		const fx = withDirs({ project: { left: [], right: [], shortcuts: [] } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.cfg.left, []);
+			assert.deepEqual(loaded.cfg.right, []);
+			assert.deepEqual(loaded.cfg.shortcuts, []);
+			for (const key of ["left", "right", "shortcuts"]) assert.ok(loaded.explicitKeys.has(key));
+			assert.deepEqual(loaded.warnings, []);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("still warns and defaults on invalid array entries while keeping valid empties", () => {
+		const fx = withDirs({ project: { left: ["greeting", "nope"], right: "box" } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.cfg.left, ["greeting"]);
+			assert.equal(loaded.cfg.right, DEFAULT_CONFIG.right);
+			assert.equal(loaded.warnings.length, 2);
+			assert.ok(loaded.warnings.every(w => w.includes('"right"') || w.includes('"left"')));
+		} finally {
+			fx.dispose();
 		}
 	});
 

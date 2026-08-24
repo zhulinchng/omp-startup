@@ -150,7 +150,18 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			stackAdvisory(); // could not take over; be honest about the stacking
 			return;
 		}
-		writeQuietOwnership(home, { previous, state: "owned" });
+		// Rollback beats marker-first: an orphan owned-marker would trip the
+		// permanent escape hatch, while quiet-without-marker is recoverable.
+		if (!writeQuietOwnership(home, { previous, state: "owned" })) {
+			try {
+				settings.set("startup.quiet", previous);
+				await settings.flush?.();
+			} catch {
+				// Both writes broken; the advisory below still tells the truth.
+			}
+			stackAdvisory(); // no owned marker, so the claim must not stand
+			return;
+		}
 		stateRef.current.hint = undefined;
 		dash.refresh();
 	}
@@ -218,6 +229,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	}
 
 	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
+		if (!ctx.hasUI || ctx.mode !== "tui") return; // same surface rule as session_start
 		if (visible) {
 			unmount(ctx);
 			return;
