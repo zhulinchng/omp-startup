@@ -59,6 +59,17 @@ package in the Pi gallery at <https://pi.dev/packages> automatically; the
 entry renders the README verbatim, so keep its counts current before
 publishing.
 
+### GitHub Packages mirror
+
+Every GitHub Release also publishes a scoped mirror `@zhulinchng/omp-startup`
+to the GitHub npm registry via
+`.github/workflows/publish-gpr.yml` (release → automatic; Actions tab →
+manual `workflow_dispatch`). The workflow repoints only the package name —
+version, contents, and the full `prepublishOnly` gate are identical to npmjs.
+Versions are immutable on that registry too: rerunning for an
+already-published version fails; bump first. Installing from it requires an
+npm token with `read:packages`, even though the package is public.
+
 Post-publish verification (see below) before announcing.
 
 ### Versioning notes

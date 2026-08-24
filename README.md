@@ -20,6 +20,11 @@ pi install npm:omp-startup          # upstream Pi, user-level; add -l for projec
 Rerun the same command to update to the latest published version.
 `omp plugin uninstall omp-startup` / `pi remove omp-startup` removes it.
 
+A scoped mirror is also published to [GitHub
+Packages](https://github.com/zhulinchng/omp-startup/packages) as
+`@zhulinchng/omp-startup` on every release (installing from that registry
+requires an npm token with `read:packages`).
+
 Manual alternative from a source checkout:
 
 ```sh

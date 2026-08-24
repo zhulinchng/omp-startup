@@ -1,0 +1,42 @@
+name: Publish to GitHub Packages
+
+# Mirrors the package to the GitHub npm registry so it appears under
+# https://github.com/zhulinchng/omp-startup/packages. GitHub's registry only
+# accepts owner-scoped names, so the published identity is
+# @zhulinchng/omp-startup (the unscoped omp-startup stays on npmjs).
+#
+# Runs automatically when a GitHub Release is published, or manually from the
+# Actions tab. Versions are immutable — rerunning for an already-published
+# version fails by design; bump first.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-gpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@zhulinchng"
+      - name: Install dev tooling (prepublish gate needs tsc)
+        run: npm ci --no-fund --no-audit
+      - name: Scope the package name for the GitHub registry
+        run: npm pkg set name=@zhulinchng/omp-startup
+      - name: Publish (prepublishOnly re-runs typecheck + tests + smoke)
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify published metadata
+        run: npm view @zhulinchng/omp-startup version --registry https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
