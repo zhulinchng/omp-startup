@@ -3,6 +3,14 @@
 	"version": "0.1.4",
 	"description": "Customizable welcome/startup dashboard for Oh My Pi (omp) and upstream Pi coding agents. Inert until configured.",
 	"author": "Zhu Lin <zhulin@czl.my>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zhulinchng/omp-startup.git"
+	},
+	"homepage": "https://github.com/zhulinchng/omp-startup#readme",
+	"bugs": {
+		"url": "https://github.com/zhulinchng/omp-startup/issues"
+	},
 	"keywords": [
 		"omp",
 		"pi",
@@ -13,7 +21,8 @@
 		"startup",
 		"tui",
 		"extension",
-		"plugin"
+		"plugin",
+		"pi-package"
 	],
 	"files": [
 		"src",

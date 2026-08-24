@@ -231,5 +231,5 @@ invalid — it renders no blocks/hints instead of reverting to the defaults.
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
 npm run smoke      # inert/render-delta/probe/token/seam assertions (44 checks)
-npm test           # 131-assertion suite (node:test, zero extra deps)
+npm test           # 136-assertion suite (node:test, zero extra deps)
 ```

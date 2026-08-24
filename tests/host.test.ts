@@ -232,6 +232,14 @@ describe("quiet-ownership marker", () => {
 		assert.deepEqual(readQuietOwnership(home), { previous: true, state: "yielded" });
 	});
 
+	it("reports marker writes as booleans (rollback seam)", () => {
+		assert.equal(writeQuietOwnership(home, { previous: false, state: "owned" }), true);
+		rmSync(join(dir, ".ownership.json"), { force: true });
+		mkdirSync(join(dir, ".ownership.json")); // directory blocks every write
+		assert.equal(writeQuietOwnership(home, { previous: false, state: "owned" }), false);
+		rmSync(join(dir, ".ownership.json"), { recursive: true, force: true });
+	});
+
 	it("creates the config directory on first write", () => {
 		rmSync(dir, { recursive: true, force: true });
 		assert.equal(existsSync(dir), false);

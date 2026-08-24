@@ -259,6 +259,31 @@ describe("dashboard: lone-ESC handling (regression: truncation/width agreement)"
 	});
 });
 
+describe("dashboard: emptied columns stay well-formed", () => {
+	it("renders uniform rows when both columns are explicitly empty", () => {
+		const lines = renderDashboard(
+			{ ...DEFAULT_CONFIG, left: [], right: [], logo: "none", title: "", quote: [] },
+			makeState({ sessions: [] }),
+			PLAIN_THEME,
+			100,
+		);
+		assert.ok(lines.length >= 2, "emptied dashboard must still render a frame");
+		const widths = new Set(stripAll(lines).map(l => visibleWidth(l)));
+		assert.equal(widths.size, 1, `ragged cells: ${[...widths].join(",")}`);
+	});
+
+	it("keeps box rows uniform when a wide emoji greeting overflows", () => {
+		const lines = renderDashboard(
+			{ ...DEFAULT_CONFIG, left: ["greeting"], right: [], logo: "none", width: 20, greeting: "🚀".repeat(12) },
+			makeState(),
+			PLAIN_THEME,
+			100,
+		);
+		const widths = new Set(stripAll(lines).map(l => visibleWidth(l)));
+		assert.equal(widths.size, 1, `ragged cells: ${[...widths].join(",")}`);
+	});
+});
+
 describe("dashboard: styled truncation (regression: SGR loss)", () => {
 	it("keeps color codes when a themed line overflows and is truncated", () => {
 		const styledTheme: DashboardTheme = {

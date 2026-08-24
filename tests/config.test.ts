@@ -284,6 +284,34 @@ describe("config: coercion and warnings", () => {
 		}
 	});
 
+	it("honors explicit zero and empty-string values instead of defaults", () => {
+		const fx = withDirs({ project: { sessions: 0, greeting: "" } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.equal(loaded.cfg.sessions, 0);
+			assert.equal(loaded.cfg.greeting, "");
+			assert.ok(loaded.explicitKeys.has("sessions"));
+			assert.ok(loaded.explicitKeys.has("greeting"));
+			assert.deepEqual(loaded.warnings, []);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("honors an explicit single blank info row", () => {
+		const fx = withDirs({ project: { info: [""] } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.cfg.info, [""]);
+			assert.ok(loaded.explicitKeys.has("info"));
+			assert.deepEqual(loaded.warnings, []);
+		} finally {
+			fx.dispose();
+		}
+	});
+
 	it("enforces command-name charset", () => {
 		const bad = withDirs({ project: { command: "not a word!" } });
 		try {
