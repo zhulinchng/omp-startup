@@ -187,10 +187,14 @@ flowchart TD
 - When the previous value was unset, giving ownership back leaves an explicit
   `startup.quiet: false` behind — semantically identical to the default.
 
-With `replaceNativeWelcome: false` the plugin never edits settings itself; a
-manual `/dashboard` show then stacks beside the native welcome and carries a
-one-line hint pointing back at the setting, disappearing together with the
-dashboard.
+Manual `/dashboard` shows stack beside the native welcome with a one-line
+hint pointing at the setting. The hint appears whenever stacking is
+permanent — takeover disabled, an unconfigured project (the inert contract
+forbids settings writes even for explicit toggles), a host without settings,
+or the escape hatch above — and disappears together with the dashboard.
+Settings writes happen only when a configured project actually claims
+ownership; failed or unavailable claims never record ownership and never
+write.
 
 The plugin writes harness settings in exactly one case: on omp with
 `replaceNativeWelcome: true` (the default), it claims the single
@@ -225,5 +229,5 @@ for that key and surfaces one warning naming the offending file.
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
 npm run smoke      # inert/render-delta/probe/token/seam assertions (44 checks)
-npm test           # 111-assertion suite (node:test, zero extra deps)
+npm test           # 122-assertion suite (node:test, zero extra deps)
 ```

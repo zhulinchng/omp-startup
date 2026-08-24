@@ -73,6 +73,9 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	let headerCapable: boolean | null = null;
 	let mountMode: MountMode = null;
 	let visible = false;
+	/** True when a config file with ≥1 recognized key exists — manual
+	 *  /dashboard shows on unconfigured projects must stay fully read-only. */
+	let configured = false;
 
 	async function refreshAsync(): Promise<void> {
 		const cwd = stateRef.current.cwd;
@@ -100,11 +103,24 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	async function claimQuietOwnership(): Promise<void> {
 		if (!cfgRef.current.replaceNativeWelcome) return;
 		if (headerCapable || stateRef.current.version === "") return; // omp family only
+		if (!configured) {
+			// Unconfigured project: the inert contract wins even for explicit
+			// toggles. Stacking is permanent here (nothing will ever own quiet),
+			// so say so instead of silently duplicating the welcome.
+			stackAdvisory();
+			return;
+		}
 		const home = homedir();
 		const settings = await loadHostSettings();
 		// Re-validate after the await: the dashboard may have been dismissed or
 		// toggled off, or config reloaded, while we were importing.
-		if (!settings || mountMode !== "widget" || !visible || !cfgRef.current.replaceNativeWelcome) return;
+		if (mountMode !== "widget" || !visible || !cfgRef.current.replaceNativeWelcome) {
+			return;
+		}
+		if (!settings) {
+			stackAdvisory(); // cannot suppress anything on this host — be honest
+			return;
+		}
 		const existing = readQuietOwnership(home);
 		if (existing?.state === "yielded") {
 			stackAdvisory(); // escape hatch active: native welcome is back for good
@@ -198,6 +214,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		// Ownership persists across dismissals by design: restoring has no
 		// visual effect mid-session (omp read the setting at boot), and the
 		// next launch should still render a single clean dashboard.
+
 	}
 
 	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
@@ -211,6 +228,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 
 		const loaded = loadConfig(ctx.cwd, homedir());
 		cfgRef.current = loaded ? loaded.cfg : DEFAULT_CONFIG;
+		configured = !!loaded && loaded.explicitKeys.size > 0;
 		for (const warning of loaded?.warnings ?? []) {
 			ctx.ui.notify(`omp-startup: ${warning}`, "warning");
 		}
@@ -233,6 +251,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 
 		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, homedir());
 		cfgRef.current = loaded?.cfg ?? DEFAULT_CONFIG;
+		configured = !!loaded && loaded.explicitKeys.size > 0;
 
 		// Warnings describe the user's own config files (broken JSON, unknown
 		// keys, invalid values) — surface them even when nothing is mountable.

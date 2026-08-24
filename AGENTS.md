@@ -63,17 +63,20 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ## Key Directories
 
 - `src/` — all runtime code (4 modules above).
-- `tests/` — 4 suites mirroring module names + shared `tests/helpers.ts`.
+- `tests/` — 5 suites: four mirroring src modules plus
+  `uninstall-reset.test.ts` for the postuninstall hook; shared `tests/helpers.ts`.
 - `scripts/smoke.ts` — host-free assertion pass (44 checks).
 - `scripts/uninstall-reset.js` — zero-dep postuninstall hook restoring owned `startup.quiet`; scoped to the `startup:` block of `~/.omp/agent/config.yml`.
-- `docs/` — `USAGE.md` (operator manual), `ARCHITECTURE.md` (maintainer reference).
+- `docs/` — `USAGE.md` (operator manual), `ARCHITECTURE.md` (maintainer reference),
+  `LEARNINGS.md` (verified omp/Pi host-behavior facts and E2E recipes),
+  `PUBLISHING.md` (release runbook).
 
 ## Development Commands
 
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 111 passing
+npm test            # node --test tests/*.test.ts — expect 122 passing
 npm run smoke       # node scripts/smoke.ts — expect 44 "ok" lines, exit 0
 ```
 
@@ -140,8 +143,9 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 - Suite map: `config.test.ts` (23 — inert rule, layers, coercion, tokens),
   `dashboard.test.ts` (34 — parity, delta rendering, geometry sweep),
   `host.test.ts` (26 — probe/fetch/settings-seam classification, ownership-marker round-trip),
-  `lifecycle.test.ts` (28 — omp vs pi routing through mock hosts, quiet
-  claim/steady-state/escape-hatch/give-up). Total 111.
+  `lifecycle.test.ts` (32 — omp vs pi routing through mock hosts, quiet
+  claim/steady-state/escape-hatch/give-up incl. failure paths),
+  `uninstall-reset.test.ts` (7 — postuninstall restore outcomes). Total 122.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

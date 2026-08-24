@@ -580,6 +580,110 @@ describe("lifecycle: replaceNativeWelcome quiet ownership", () => {
 		}
 	});
 
+	it("claims nothing on an unconfigured project, even via /dashboard", async () => {
+		const project = scratchProject(undefined);
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart(); // inert
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0);
+			const toggle = h.api.commandHandlerNamed("dashboard");
+			await toggle("", h.ctx); // explicit user action mounts the widget…
+			await drain();
+			await drain();
+			assert.equal(h.calls.setWidget.length, 1); // …but stays read-only:
+			assert.equal(settings.calls.length, 0, "inert contract forbids settings writes");
+			assert.equal(readOwnership(), undefined);
+			const content = h.calls.setWidget[0]?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = content?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("replaceNativeWelcome"), "permanent stacking carries the advisory");
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("advises instead of claiming when the host exposes no settings", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart(); // no override → loadHostSettings degrades
+			await drain();
+			await drain();
+			assert.equal(h.calls.setWidget.length, 1); // widget still mounts
+			assert.equal(readOwnership(), undefined);
+			const content = h.calls.setWidget[0]?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = content?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("replaceNativeWelcome"), "unstoppable stacking says so");
+		} finally {
+			dropOwnership();
+			project.dispose();
+		}
+	});
+
+	it("keeps honest stacking when set() throws mid-claim", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const calls: Array<{ op: string; value?: unknown }> = [];
+		let throwOnSet = true;
+		const fake = {
+			get(path: string) {
+				calls.push({ op: "get" });
+				return path === "startup.quiet" ? false : undefined;
+			},
+			set(path: string, value: unknown) {
+				calls.push({ op: "set", value });
+				if (throwOnSet) throw new Error("disk full");
+			},
+			async flush() {},
+		};
+		setHostSettingsForTest(fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			assert.equal(calls.filter(c => c.op === "set").length, 1);
+			assert.equal(readOwnership(), undefined, "failed claims must not record ownership");
+			const content = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			const lines = content?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			assert.ok(lines.includes("replaceNativeWelcome"), "failed claim admits the stacking");
+
+			throwOnSet = false; // a later session succeeds once the host recovers
+			const h2 = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h2.sessionStart();
+			await drain();
+			await drain();
+			assert.deepEqual(readOwnership(), { previous: false, state: "owned" });
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("give-up keeps the marker when it cannot restore (no settings)", async () => {
+		const project = scratchProject(undefined); // inert → give-up path runs
+		seedOwnership(false, "owned");
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart(); // real loadHostSettings → undefined in tests
+			await drain();
+			assert.deepEqual(readOwnership(), { previous: false, state: "owned" }, "retry later");
+		} finally {
+			dropOwnership();
+			project.dispose();
+		}
+	});
+
 	it("loadHostSettings degrades to undefined in a host-free environment", async () => {
 		setHostSettingsForTest(null); // clear override → real probing path
 		assert.equal(await loadHostSettings(), undefined);
