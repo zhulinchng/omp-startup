@@ -6,8 +6,8 @@ name: Publish to GitHub Packages
 # @zhulinchng/omp-startup (the unscoped omp-startup stays on npmjs).
 #
 # Runs automatically when a GitHub Release is published, or manually from the
-# Actions tab. Versions are immutable — rerunning for an already-published
-# version fails by design; bump first.
+:# Actions tab. Registry versions are immutable: a run whose version is
+# already published skips the publish step with a warning instead of failing.
 
 on:
   release:
@@ -47,7 +47,20 @@ jobs:
         run: npm ci --no-fund --no-audit
       - name: Scope the package name for the GitHub registry
         run: npm pkg set name=@zhulinchng/omp-startup
+      - name: Skip if this version is already published
+        id: gpr
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@zhulinchng/omp-startup@$VERSION" version --registry https://npm.pkg.github.com > /dev/null 2>&1; then
+            echo "already-published=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::@zhulinchng/omp-startup@$VERSION is already on GitHub Packages; nothing to publish (versions are immutable). Bump and cut a new release instead."
+          else
+            echo "already-published=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish (prepublishOnly re-runs the gates as defense)
+        if: steps.gpr.outputs.already-published != 'true'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

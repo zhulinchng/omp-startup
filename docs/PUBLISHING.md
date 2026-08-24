@@ -77,8 +77,8 @@ two jobs: a **Gates** job (typecheck + full test suite + smoke on Node 24)
 must succeed before the publish job starts, and `prepublishOnly` re-runs the
 gates inside the publish step as defense. The workflow repoints only the
 package name — version and contents are otherwise identical to npmjs.
-Versions are immutable on that registry too: rerunning for an
-already-published version fails at the Publish step; bump first. Installing
+Versions are immutable on that registry too: a run whose version is already
+published skips the publish step with a warning; bump first. Installing
 from it requires an npm token with `read:packages`, even though the package
 is public.
 
