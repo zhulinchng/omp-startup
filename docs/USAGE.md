@@ -41,6 +41,10 @@ pi install -l npm:omp-startup         # Pi, project-local → .pi/settings.json 
   `~/.omp/agent/config.yml` to bring the native welcome back. npm-based
   uninstalls run `scripts/uninstall-reset.js`, which does this automatically
   whenever the plugin actually owned the value.
+- A scoped mirror is also published to [GitHub
+  Packages](https://github.com/zhulinchng/omp-startup/packages) as
+  `@zhulinchng/omp-startup` on every release; installing from that registry
+  needs an npm token with `read:packages`.
 
 > **Pi note:** `pi install` records the package in
 > `~/.pi/agent/settings.json` under `packages` and unpacks it to

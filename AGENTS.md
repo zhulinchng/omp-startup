@@ -70,6 +70,9 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 - `docs/` — `USAGE.md` (operator manual), `ARCHITECTURE.md` (maintainer reference),
   `LEARNINGS.md` (verified omp/Pi host-behavior facts and E2E recipes),
   `PUBLISHING.md` (release runbook).
+- `.github/workflows/` — `ci.yml` (typecheck + tests + smoke on Node 24/26
+  for pushes and PRs) and `publish-gpr.yml` (gated mirror of each release to
+  GitHub Packages as `@zhulinchng/omp-startup`).
 
 ## Development Commands
 

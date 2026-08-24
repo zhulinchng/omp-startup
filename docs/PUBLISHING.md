@@ -14,8 +14,8 @@ is what the hosts execute:
 |---|---|
 | `src/*.ts` | The extension sources both hosts import directly |
 | `types.d.ts` | Ambient host-API declarations (typecheck only) |
-| `docs/`, `README.md`, `LICENSE` | Documentation |
-| *not shipped* | `tests/`, `scripts/`, `tsconfig.json`, `AGENTS.md`, dev tooling |
+| `scripts/uninstall-reset.js` | npm `postuninstall` hook: restores an owned `startup.quiet` on removal |
+| *not shipped* | `tests/`, other `scripts/`, `tsconfig.json`, `AGENTS.md`, dev tooling |
 
 The dual manifest (`package.json#omp.extensions` / `#pi.extensions`) points at
 `./src/index.ts`; that is the entire "build output".
@@ -28,30 +28,40 @@ One-time setup:
 2. Git baseline committed (`git init` if needed) — publishing with a dirty
    tree risks shipping uncommitted edits you can't reproduce later.
 
-Every release:
+Every release ships **two packages from one source**: the unscoped
+`omp-startup` on npmjs and the scoped `@zhulinchng/omp-startup` on GitHub
+Packages. One version bump covers both — never let them drift.
 
 1. Make your changes; verify locally:
    ```sh
    npm run typecheck && npm test && npm run smoke
    ```
-2. Bump the version (creates the commit + tag when git is present):
+2. Bump the shared version once (creates the commit + tag when git is
+   present); both packages publish under this same number:
    ```sh
    npm version patch   # or minor / major
    ```
-3. Publish. The `prepublishOnly` script re-runs typecheck + full test suite +
-   smoke suite as a gate; it aborts the publish on any failure:
+3. Publish the **unscoped** package to npmjs. The `prepublishOnly` script
+   re-runs typecheck + full test suite + smoke as a gate; it aborts the
+   publish on any failure:
    ```sh
    npm publish         # browser-auth flow: press ENTER at the prompt, then
                        # approve in the opened npmjs.com tab (2FA)
    ```
-4. Push the version commit and tag, then cut the matching GitHub release so
-   the npm page and the repo releases link to each other:
+4. Publish the **scoped** package to GitHub Packages. Cutting the release
+   triggers it automatically (Actions tab → "Publish to GitHub Packages" →
+   Run workflow works too); its Gates job re-runs the full suite first:
    ```sh
    git push origin main --follow-tags
    gh release create vX.Y.Z --title "vX.Y.Z" \
      --notes "**npm:** [omp-startup@X.Y.Z](https://www.npmjs.com/package/omp-startup/v/X.Y.Z)"
    ```
-5. Inspect what would ship before the real publish with
+5. Verify both registries report the same new version:
+   ```sh
+   npm view omp-startup version
+   npm view @zhulinchng/omp-startup version --registry https://npm.pkg.github.com
+   ```
+6. Inspect what would ship before a real publish with
    `npm publish --dry-run` (tarball contents are listed).
 
 Publishing with the `pi-package` keyword (set in `package.json`) lists the
@@ -60,15 +70,21 @@ entry renders the README verbatim, so keep its counts current before
 publishing.
 
 ### GitHub Packages mirror
-
 Every GitHub Release also publishes a scoped mirror `@zhulinchng/omp-startup`
-to the GitHub npm registry via
-`.github/workflows/publish-gpr.yml` (release → automatic; Actions tab →
-manual `workflow_dispatch`). The workflow repoints only the package name —
-version, contents, and the full `prepublishOnly` gate are identical to npmjs.
+to the GitHub npm registry via `.github/workflows/publish-gpr.yml` (release →
+automatic; Actions tab → manual `workflow_dispatch`). The workflow runs in
+two jobs: a **Gates** job (typecheck + full test suite + smoke on Node 24)
+must succeed before the publish job starts, and `prepublishOnly` re-runs the
+gates inside the publish step as defense. The workflow repoints only the
+package name — version and contents are otherwise identical to npmjs.
 Versions are immutable on that registry too: rerunning for an
-already-published version fails; bump first. Installing from it requires an
-npm token with `read:packages`, even though the package is public.
+already-published version fails at the Publish step; bump first. Installing
+from it requires an npm token with `read:packages`, even though the package
+is public.
+
+A separate CI workflow (`.github/workflows/ci.yml`) runs the same gates on
+every push to `main` and every PR, on a Node 24 + 26 matrix — releases should
+never be the first place code meets a fresh Node version.
 
 Post-publish verification (see below) before announcing.
 

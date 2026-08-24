@@ -294,6 +294,7 @@ Documented deliberately; none affect the inert rule.
 | Unit | `node --test tests/*.test.ts` — 136 assertions: inert rule, layers, coercion incl. explicit-empty arrays and degenerate values, tokens, geometry invariants, lone-ESC/wide-glyph truncation, emptied-column frames, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured read-only toggles |
 | Smoke | `scripts/smoke.ts` — 44 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, quiet-ownership seam) |
 | Types | `tsc --noEmit` strict, including `tests/` |
+| CI | GitHub Actions (`.github/workflows/ci.yml`): same gates on Node 24 + 26 for every push/PR; `publish-gpr.yml` re-runs the gates in a blocking job before mirroring a release to GitHub Packages as `@zhulinchng/omp-startup` |
 | Live | PTY-driven omp 18.0.3 sessions (configured frame, resume parity with/without plugin, opted-out manual show, leak-reproduction and post-leak bare-resume) |
 
 Live results recorded for the shipped build:
