@@ -126,8 +126,32 @@ function formatTimeAgo(then: Date): string {
 	return `${Math.floor(months / 12)}y ago`;
 }
 
+/**
+ * Resolve the host package at runtime. omp rewrites aliased scopes (incl.
+ * dynamic `import()`) to its bundled copy, so the canonical specifier works
+ * there; upstream Pi only publishes the legacy scope. Try canonical first,
+ * fall back to legacy — both specifiers stay string literals so the host's
+ * source rewriter can see them. Any failure degrades to undefined and
+ * callers keep advisory-only / empty-block mode.
+ */
+async function importHostModule(): Promise<
+	typeof import("@earendil-works/pi-coding-agent") | typeof import("@oh-my-pi/pi-coding-agent") | undefined
+> {
+	try {
+		return await import("@oh-my-pi/pi-coding-agent");
+	} catch {
+		// Canonical scope absent (upstream Pi, older hosts) — try legacy.
+	}
+	try {
+		return await import("@earendil-works/pi-coding-agent");
+	} catch {
+		return undefined;
+	}
+}
+
 async function listViaHostPackage(cwd: string, count: number): Promise<SessionRow[]> {
-	const mod = await import("@earendil-works/pi-coding-agent");
+	const mod = await importHostModule();
+	if (!mod) return [];
 	const sessionManager = mod.SessionManager;
 
 	// Preferred path: the host's own recent-session helper yields native
@@ -230,7 +254,7 @@ export function setHostSettingsForTest(s: HostSettings | undefined | null): void
  *
  * omp exports one — `settings.set("startup.quiet", …)` updates memory now and
  * persists (debounced) to the global config.yml; upstream Pi exports none.
- * Feature-detected dynamic import, same pattern as listViaHostPackage:
+ * Resolves via importHostModule (canonical scope first, legacy fallback):
  * absence or drift degrades to undefined and callers keep advisory-only mode.
  */
 export async function loadHostSettings(): Promise<HostSettings | undefined> {
@@ -238,8 +262,8 @@ export async function loadHostSettings(): Promise<HostSettings | undefined> {
 	if (settingsCached) return cachedSettings;
 	let resolved: HostSettings | undefined;
 	try {
-		const mod = await import("@earendil-works/pi-coding-agent");
-		const s: unknown = mod.settings;
+		const mod = await importHostModule();
+		const s: unknown = mod?.settings;
 		if (typeof s === "object" && s !== null) {
 			// Named typed view so members can be inspected; each member is validated
 			// by typeof below before use. (`in` checks are unreliable here: bundled

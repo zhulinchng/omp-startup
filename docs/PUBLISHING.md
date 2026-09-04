@@ -36,8 +36,9 @@ Packages. One version bump covers both — never let them drift.
    ```sh
    npm run typecheck && npm test && npm run smoke
    ```
-2. Bump the shared version once (creates the commit + tag when git is
-   present); both packages publish under this same number:
+2. Add a `CHANGELOG.md` entry for the release, then bump the shared version
+   once (creates the commit + tag when git is present); both packages publish
+   under this same number:
    ```sh
    npm version patch   # or minor / major
    ```

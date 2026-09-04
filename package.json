@@ -1,7 +1,7 @@
 {
 	"name": "omp-startup",
 	"version": "0.1.10",
-	"description": "Customizable welcome/startup dashboard for Oh My Pi (omp) and upstream Pi coding agents. Inert until configured.",
+	"description": "Custom startup dashboard for omp and Pi coding agents.",
 	"author": "Zhu Lin <zhulin@czl.my>",
 	"repository": {
 		"type": "git",
@@ -30,6 +30,7 @@
 		"docs",
 		"scripts/uninstall-reset.js",
 		"README.md",
+		"CHANGELOG.md",
 		"LICENSE"
 	],
 	"main": "./src/index.ts",
@@ -50,7 +51,7 @@
 		"smoke": "node --disable-warning=ExperimentalWarning scripts/smoke.ts",
 		"test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
 		"prepublishOnly": "npm run typecheck && npm test && npm run smoke",
-		"postuninstall": "node scripts/uninstall-reset.js"
+		"postuninstall": "node scripts/uninstall-reset.js || true"
 	},
 	"devDependencies": {
 		"@types/node": "^24.0.0",

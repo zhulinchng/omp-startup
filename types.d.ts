@@ -129,6 +129,11 @@ declare module "@earendil-works/pi-coding-agent" {
 		  }
 		| undefined;
 
-	/** omp only: global settings singleton (`get`/`set` on dotted paths); feature-detected. */
-	export const settings: unknown;
+/** omp only: global settings singleton (`get`/`set` on dotted paths); feature-detected. */
+export const settings: unknown;
+}
+
+/** Canonical scope; identical surface — re-exported so both specifiers typecheck. */
+declare module "@oh-my-pi/pi-coding-agent" {
+	export * from "@earendil-works/pi-coding-agent";
 }
