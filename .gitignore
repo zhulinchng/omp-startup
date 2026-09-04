@@ -1,2 +1,5 @@
 node_modules/
 *.log
+.agents/skills
+.DS_Store
+skills-lock.json
