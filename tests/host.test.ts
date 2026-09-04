@@ -284,6 +284,18 @@ describe("loadHostSettings flush passthrough", () => {
 		}
 	});
 
+	it("caches the resolution and drops it when the seam resets", async () => {
+		const fake = { get: () => undefined, set: () => {} };
+		setHostSettingsForTest(fake);
+		try {
+			assert.equal(await loadHostSettings(), fake);
+			assert.equal(await loadHostSettings(), fake, "second load must reuse the first resolution");
+		} finally {
+			setHostSettingsForTest(null);
+		}
+		assert.equal(await loadHostSettings(), undefined, "seam reset clears the cache");
+	});
+
 	it("omits flush when the host SDK lacks one", async () => {
 		setHostSettingsForTest({ get: () => undefined, set: () => {} });
 		try {

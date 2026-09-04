@@ -73,7 +73,8 @@ export function detectAppName(execPath: string = process.execPath): string {
 	}
 }
 
-function detectUser(): string {
+/** OS user for the `{user}` token; shared with the entry point's initial state. */
+export function detectUser(): string {
 	return process.env.USER ?? process.env.USERNAME ?? "?";
 }
 
@@ -199,15 +200,22 @@ export interface HostSettings {
 	 */
 	flush?(): Promise<void>;
 }
-
 let settingsOverride: HostSettings | undefined;
 let settingsOverridden = false;
+// The SDK singleton never changes within a process, but every mount used to
+// re-run the dynamic import plus wrapper allocation (up to three times per
+// session route: claim, give-up, refresh). Cache the first resolution.
+let cachedSettings: HostSettings | undefined;
+let settingsCached = false;
 
 /**
  * Test seam: force loadHostSettings() to return `s` (pass undefined to
  * simulate an absent SDK); pass null to clear the override entirely.
+ * Any call also drops the resolution cache so tests stay isolated.
  */
 export function setHostSettingsForTest(s: HostSettings | undefined | null): void {
+	settingsCached = false;
+	cachedSettings = undefined;
 	if (s === null) {
 		settingsOverride = undefined;
 		settingsOverridden = false;
@@ -227,35 +235,40 @@ export function setHostSettingsForTest(s: HostSettings | undefined | null): void
  */
 export async function loadHostSettings(): Promise<HostSettings | undefined> {
 	if (settingsOverridden) return settingsOverride;
+	if (settingsCached) return cachedSettings;
+	let resolved: HostSettings | undefined;
 	try {
 		const mod = await import("@earendil-works/pi-coding-agent");
 		const s: unknown = mod.settings;
-		if (typeof s !== "object" || s === null) return undefined;
-		// Named typed view so members can be inspected; each member is validated
-		// by typeof below before use. (`in` checks are unreliable here: bundled
-		// module-namespace objects may answer `in` falsely for existing props.)
-		const candidate = s as { get?: unknown; set?: unknown; flush?: unknown };
-		const { get, set } = candidate;
-		if (typeof get !== "function" || typeof set !== "function") {
-			return undefined;
+		if (typeof s === "object" && s !== null) {
+			// Named typed view so members can be inspected; each member is validated
+			// by typeof below before use. (`in` checks are unreliable here: bundled
+			// module-namespace objects may answer `in` falsely for existing props.)
+			const candidate = s as { get?: unknown; set?: unknown; flush?: unknown };
+			const { get, set } = candidate;
+			if (typeof get === "function" && typeof set === "function") {
+				const flush =
+					typeof candidate.flush === "function"
+						? async () => {
+								await (candidate.flush as () => Promise<void>)();
+							}
+						: undefined;
+				const wrapped: HostSettings = {
+					get: path => get(path),
+					set: (path, value) => {
+						set(path, value);
+					},
+				};
+				if (flush) wrapped.flush = flush;
+				resolved = wrapped;
+			}
 		}
-		const flush =
-			typeof candidate.flush === "function"
-				? async () => {
-						await (candidate.flush as () => Promise<void>)();
-					}
-				: undefined;
-		const wrapped: HostSettings = {
-			get: path => get(path),
-			set: (path, value) => {
-				set(path, value);
-			},
-		};
-		if (flush) wrapped.flush = flush;
-		return wrapped;
 	} catch {
-		return undefined;
+		resolved = undefined;
 	}
+	cachedSettings = resolved;
+	settingsCached = true;
+	return resolved;
 }
 
 // ---------------------------------------------------------------------------

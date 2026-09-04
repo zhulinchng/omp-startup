@@ -234,6 +234,6 @@ invalid — it renders no blocks/hints instead of reverting to the defaults.
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
-npm run smoke      # inert/render-delta/probe/token/seam assertions (51 checks)
-npm test           # 160-assertion suite (node:test, zero extra deps)
+npm run smoke      # inert/render-delta/probe/token/seam assertions (53 checks)
+npm test           # 168-assertion suite (node:test, zero extra deps)
 ```

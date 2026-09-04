@@ -909,3 +909,55 @@ describe("lifecycle: session routes (switch/branch/tree)", () => {
 		}
 	});
 });
+describe("lifecycle: concurrent async refresh", () => {
+	it("settles branch and sessions into a single repaint", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			// Pi header route (no VERSION): no quiet-ownership refreshes involved.
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			let paints = 0;
+			const countingTui = { requestRender() { paints++; } };
+			const ui = h.ctx.ui;
+			h.ctx.ui = {
+				...ui,
+				setHeader(factory: DashboardComponentFactory | undefined) {
+					ui.setHeader(factory);
+					// Re-invoke with the counting TUI (and run one render so the
+					// handle captures it) so late async refreshes land here.
+					factory?.(countingTui, INLINE_THEME)?.render(100);
+				},
+			};
+			await h.sessionStart();
+			for (let i = 0; i < 50 && paints === 0; i++) await drain();
+			await drain();
+			await drain();
+			await drain();
+			assert.equal(paints, 1, "branch+sessions must settle into a single repaint");
+		} finally {
+			project.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("still lands the git branch when sessions settle alongside it", async () => {
+		const project = scratchProject({ greeting: "hi {branch}" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			h.api.api.exec = async () => ({ stdout: "feature-x\n", stderr: "", code: 0 });
+			await h.sessionStart();
+			let lines = "";
+			for (let i = 0; i < 100 && !lines.includes("feature-x"); i++) {
+				await drain();
+				const factory = h.calls.setWidget.at(-1)?.content as
+					| ((t: unknown, th: unknown) => { render(w: number): string[] })
+					| undefined;
+				lines = factory?.({ requestRender() {} }, INLINE_THEME).render(100).join("\n") ?? "";
+			}
+			assert.ok(lines.includes("feature-x"), "concurrent refresh must still apply the branch");
+		} finally {
+			project.dispose();
+			dropOwnership();
+			setHostSettingsForTest(null);
+		}
+	});
+});

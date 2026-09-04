@@ -349,6 +349,16 @@ console.log("7. renderer hardening");
 		"plain layout fits narrow terminals",
 		narrow.length > 0 && narrow.every(line => PLAIN([line])[0] !== undefined && [...(PLAIN([line])[0] ?? "")].length <= 20),
 	);
+	const repaintA = renderDashboard(DEFAULT_CONFIG, STATE, STUB_THEME, 100);
+	const repaintB = renderDashboard(DEFAULT_CONFIG, STATE, STUB_THEME, 100);
+	check(
+		"gradient memo repaints equal frames without aliasing",
+		JSON.stringify(repaintA) === JSON.stringify(repaintB) && repaintA !== repaintB,
+	);
+	check(
+		"expandTokens honors an injected clock",
+		expandTokens("{date} {time}", STATE, new Date(2026, 8, 4, 9, 5)) === "2026-09-04 09:05",
+	);
 }
 
 console.log(failures === 0 ? "\nAll smoke checks passed." : `\n${failures} smoke check(s) FAILED.`);

@@ -38,10 +38,6 @@ const MARKER_CLOSE = "\x02";
 
 const SGR_PATTERN = /\x1b\[[0-9;]*m/g;
 
-function plainText(text: string): string {
-	return text.replace(SGR_PATTERN, "");
-}
-
 /**
  * Terminal cell width for one code point. Full wcwidth is out of scope for a
  * zero-dependency renderer; this covers the wide ranges that actually appear
@@ -70,10 +66,9 @@ function charCellWidth(cp: number): number {
 	return 1;
 }
 
-/** Visible terminal-cell width of a line after stripping SGR sequences. */
 export function visibleWidth(text: string): number {
 	let total = 0;
-	for (const char of plainText(text)) total += charCellWidth(char.codePointAt(0) ?? 0);
+	for (const char of text.replace(SGR_PATTERN, "")) total += charCellWidth(char.codePointAt(0) ?? 0);
 	return total;
 }
 
@@ -89,6 +84,14 @@ const ELLIPSIS_PLACEHOLDER = "…";
  */
 function truncateToWidth(text: string, width: number): string {
 	if (visibleWidth(text) <= width) return text;
+	return truncateOverflow(text, width);
+}
+
+/**
+ * Truncation core for callers that already measured the text as overflowing
+ * `width` — skips the second full measure truncateToWidth would repeat.
+ */
+function truncateOverflow(text: string, width: number): string {
 	const maxCells = Math.max(0, width - 1); // room for the ellipsis
 	let out = "";
 	let used = 0;
@@ -103,7 +106,7 @@ function truncateToWidth(text: string, width: number): string {
 			continue;
 		}
 		// Only a well-formed CSI intro (\x1b[) opens an SGR run — a lone ESC
-		// is ordinary content, matching visibleWidth/plainText.
+		// is ordinary content, matching visibleWidth's own strip.
 		if (char === "\x1b" && chars[i + 1] === "[") {
 			inEscape = true;
 			out += char;
@@ -120,13 +123,13 @@ function truncateToWidth(text: string, width: number): string {
 /** Fit a (possibly styled) string to an exact visible width, preserving SGR runs. */
 function fitToWidth(text: string, width: number): string {
 	const visLen = visibleWidth(text);
-	if (visLen > width) return truncateToWidth(text, width);
+	if (visLen > width) return truncateOverflow(text, width);
 	return text + padding(width - visLen);
 }
 
 function centerText(text: string, width: number): string {
 	const visLen = visibleWidth(text);
-	if (visLen >= width) return truncateToWidth(text, width);
+	if (visLen >= width) return truncateOverflow(text, width);
 	const leftPad = Math.floor((width - visLen) / 2);
 	return padding(leftPad) + text + padding(width - visLen - leftPad);
 }
@@ -153,10 +156,19 @@ function gradientColorAt(t: number): readonly [number, number, number] {
 /**
  * Paint a diagonal bottom-left → top-right gradient across the given lines,
  * one resting frame (the native intro animation is intentionally not replicated).
+ *
+ * Memoized by art content: `render()` runs on every TUI repaint (each
+ * keystroke), and the painted output is a pure function of the input lines —
+ * rebuilding ~60 SGR spans per frame is pure allocation churn. A copy is
+ * returned so callers can never mutate the cached frame.
  */
+let gradientCacheKey: string | null = null;
+let gradientCacheFrame: string[] | null = null;
 function paintGradient(lines: string[]): string[] {
+	const key = lines.join("\n");
+	if (key === gradientCacheKey && gradientCacheFrame) return [...gradientCacheFrame];
 	const height = Math.max(1, lines.length);
-	return lines.map((line, y) => {
+	const frame = lines.map((line, y) => {
 		const chars = [...line];
 		const width = Math.max(1, chars.length);
 		let out = "";
@@ -172,12 +184,14 @@ function paintGradient(lines: string[]): string[] {
 		}
 		return out;
 	});
+	gradientCacheKey = key;
+	gradientCacheFrame = frame;
+	return [...frame];
 }
 
 // ---------------------------------------------------------------------------
 // Blocks
 // ---------------------------------------------------------------------------
-
 interface BlockLines {
 	header?: string;
 	lines: string[];
@@ -189,10 +203,10 @@ function resolveLogoArt(cfg: DashboardConfig): string[] {
 	return cfg.gradient ? paintGradient(art) : [...art];
 }
 
-function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): BlockLines | undefined {
+function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState, now: Date): BlockLines | undefined {
 	switch (name) {
 		case "greeting":
-			return { lines: [expandTokens(cfg.greeting, state)] };
+			return { lines: [expandTokens(cfg.greeting, state, now)] };
 		case "blank":
 			return { lines: [""] };
 		case "logo": {
@@ -204,7 +218,7 @@ function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): 
 		if (cfg.info.length === 0) return undefined;
 		const rows: string[] = [];
 		cfg.info.forEach((row, index) => {
-			const text = expandTokens(row, state);
+			const text = expandTokens(row, state, now);
 			if (text === "") return; // empty expansion contributes no row (unlike "blank")
 			// Alternating muted/borderMuted reproduces the native model/provider styling.
 			const color = index % 2 === 0 ? "muted" : "borderMuted";
@@ -275,7 +289,7 @@ function computeGeometry(cfg: DashboardConfig, termWidth: number, hasRightBlocks
 	const preferredLeftCol = 26;
 	const minLeftCol = 12; // logo width
 	const minRightCol = 20;
-	const leftMinContentWidth = Math.max(minLeftCol, visibleWidth(plainText(cfg.greeting)));
+	const leftMinContentWidth = Math.max(minLeftCol, visibleWidth(cfg.greeting));
 
 	const desiredLeftCol = Math.max(
 		Math.min(preferredLeftCol, Math.max(minLeftCol, Math.floor(dualContentWidth * 0.35))),
@@ -309,14 +323,20 @@ function pickQuote(quote: string[]): string | undefined {
 	return quote[dayIndex % quote.length];
 }
 
-function buildQuoteLine(cfg: DashboardConfig, state: DashboardState, theme: DashboardTheme, width: number): string[] {
+function buildQuoteLine(
+	cfg: DashboardConfig,
+	state: DashboardState,
+	theme: DashboardTheme,
+	width: number,
+	now: Date,
+): string[] {
 	if (cfg.quote.length === 0) return [];
 	const picked = pickQuote(cfg.quote);
 	if (!picked) return [];
 	const budget = Math.max(1, width - 2);
 	// A quote carrying embedded newlines must not inject a raw line break
 	// into a single widget line (observed: box border split mid-render).
-	return expandTokens(picked, state)
+	return expandTokens(picked, state, now)
 		.split("\n")
 		.map(part => ` ${theme.fg("dim", `\x1b[3m${truncateToWidth(part, budget)}\x1b[23m`)}`);
 }
@@ -343,6 +363,7 @@ function assembleBox(
 	cfg: DashboardConfig,
 	state: DashboardState,
 	theme: DashboardTheme,
+	now: Date,
 ): string[] {
 	const leftRaw: string[] = [];
 	for (const block of leftBlocks) {
@@ -355,7 +376,7 @@ function assembleBox(
 	const lines: string[] = [];
 
 	// Top border with optional embedded title (native: three dashes, then title).
-	const rawTitle = expandTokens(cfg.title, state).trim();
+	const rawTitle = expandTokens(cfg.title, state, now).trim();
 	// Degenerate expansion (e.g. "{app} v{version}" on hosts exposing neither)
 	// would render a lone "v" — treat it as no title.
 	if (rawTitle.length > 0 && !/^[v\s]*$/.test(rawTitle)) {
@@ -375,6 +396,8 @@ function assembleBox(
 	// Content rows.
 	const maxRows = Math.max(leftRaw.length, rightLines.length);
 	for (let i = 0; i < maxRows; i++) {
+		// Re-fit: truncation can land short of the column (a wide glyph that
+		// straddles the ellipsis budget leaves a 1-cell gap), so pad here.
 		const left = fitToWidth(leftRaw[i] ?? "", geo.leftCol);
 		if (geo.showRightColumn) {
 			const right = fitToWidth(rightLines[i] ?? "", geo.rightCol);
@@ -452,8 +475,9 @@ export function renderDashboard(
 		seen.add(name);
 		return true;
 	});
+	const now = new Date(); // one clock per frame: {date}/{time} agree everywhere
 	const buildAll = (names: string[]) =>
-		names.map(name => buildBlock(name, cfg, state)).filter((block): block is BlockLines => block !== undefined);
+		names.map(name => buildBlock(name, cfg, state, now)).filter((block): block is BlockLines => block !== undefined);
 
 	if (!isBox) {
 		// Plain layout stacks every configured block full-width, left order then right.
@@ -462,7 +486,7 @@ export function renderDashboard(
 		const stacked = [...buildAll(leftList), ...buildAll(rightList)];
 		return [
 			...assemblePlain(stacked, geometry.boxWidth - 2, theme),
-			...buildQuoteLine(cfg, state, theme, geometry.boxWidth),
+			...buildQuoteLine(cfg, state, theme, geometry.boxWidth, now),
 			...hintLine(state, theme, geometry.boxWidth),
 		];
 	}
@@ -471,10 +495,10 @@ export function renderDashboard(
 	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0);
 	if (!geometry) return [];
 	const leftBlocks = buildAll(leftList);
-	const lines = assembleBox(leftBlocks, rightBlocks, geometry, cfg, state, theme);
+	const lines = assembleBox(leftBlocks, rightBlocks, geometry, cfg, state, theme, now);
 	return [
 		...lines,
-		...buildQuoteLine(cfg, state, theme, geometry.boxWidth),
+		...buildQuoteLine(cfg, state, theme, geometry.boxWidth, now),
 		...hintLine(state, theme, geometry.boxWidth),
 	];
 }

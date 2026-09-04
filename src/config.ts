@@ -241,9 +241,11 @@ export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 	const warnings: string[] = [];
 
 	// Project layer: first existing file wins so .omp and .pi users don't double-apply.
-	const projectFiles = [join(cwd, ".omp", "dashboard.json"), join(cwd, ".pi", "dashboard.json")];
-	const project = projectFiles.map(file => readLayer(file, warnings)).find(layer => layer.data !== undefined);
-
+	// The fallback is read lazily — when .omp exists, .pi is shadowed entirely
+	// (not even warnings), saving a stat+read+parse on every session route.
+	const ompLayer = readLayer(join(cwd, ".omp", "dashboard.json"), warnings);
+	const project =
+		ompLayer.data !== undefined ? ompLayer : readLayer(join(cwd, ".pi", "dashboard.json"), warnings);
 	const user = readLayer(join(home, ".config", "dashboard", "config.json"), warnings);
 
 	const layers = [user, project].filter((layer): layer is RawLayer & { data: Record<string, unknown> } =>
@@ -329,8 +331,12 @@ function twoDigits(n: number): string {
 	return String(n).padStart(2, "0");
 }
 
-/** Substitute `{token}` placeholders; unknown tokens are left untouched. */
-export function expandTokens(text: string, snap: TokenSnapshot): string {
+/**
+ * Substitute `{token}` placeholders; unknown tokens are left untouched.
+ * `now` backs `{date}`/`{time}` — renderers pass one clock per frame so every
+ * token in a frame agrees (and a frame costs one clock read, not one per row).
+ */
+export function expandTokens(text: string, snap: TokenSnapshot, now: Date = new Date()): string {
 	return text.replace(/\{(\w+)\}/g, (match, name: string) => {
 		switch (name) {
 			case "user":
@@ -350,11 +356,9 @@ export function expandTokens(text: string, snap: TokenSnapshot): string {
 			case "app":
 				return snap.app;
 			case "date": {
-				const now = new Date();
 				return `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())}`;
 			}
 			case "time": {
-				const now = new Date();
 				return `${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}`;
 			}
 			default:

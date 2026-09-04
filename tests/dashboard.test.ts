@@ -411,3 +411,35 @@ describe("dashboard: sessions height stability", () => {
 		assert.equal(box(2).length, box(4).length);
 	});
 });
+
+describe("dashboard: gradient memo (repaint fast path)", () => {
+	it("returns equal frames across repaints and repaints on art change", () => {
+		const state = makeState();
+		const first = render(undefined, state);
+		const second = render(undefined, state);
+		assert.deepEqual(second, first);
+		assert.notEqual(second, first, "memoized frames must not alias (callers may hold them)");
+		const custom = render({ logo: ["AB", "CD"] }, state);
+		assert.ok(!custom.join("\n").includes("▀"), "changed art repaints instead of serving the cached frame");
+		assert.deepEqual(render(undefined, state), first, "original art still paints after a custom logo");
+	});
+
+	it("never lets a held frame poison the cache", () => {
+		const state = makeState();
+		const held = render(undefined, state);
+		held.length = 0;
+		const fresh = render(undefined, state);
+		assert.ok(fresh.length > 0, "mutating a returned frame must not empty later renders");
+		assert.deepEqual(fresh, render(undefined, state));
+	});
+
+	it("expands {date} in the greeting from the frame clock", () => {
+		const lines = render(
+			{ greeting: "today {date}", left: ["greeting"], right: [], logo: "none", title: "" },
+			makeState(),
+		);
+		const today = new Date();
+		const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+		assert.ok(lines.join("\n").includes(`today ${stamp}`));
+	});
+});

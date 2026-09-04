@@ -64,7 +64,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 
 - `src/` — all runtime code (4 modules above).
 - `tests/` — 5 suites: four mirroring src modules plus
-- `scripts/smoke.ts` — host-free assertion pass (51 checks).
+- `scripts/smoke.ts` — host-free assertion pass (53 checks).
 - `scripts/uninstall-reset.js` — zero-dep postuninstall hook restoring owned `startup.quiet`; scoped to the `startup:` block of `~/.omp/agent/config.yml`.
 - `docs/` — `USAGE.md` (operator manual), `ARCHITECTURE.md` (maintainer reference),
   `LEARNINGS.md` (verified omp/Pi host-behavior facts and E2E recipes),
@@ -78,8 +78,8 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 160 passing
-npm run smoke       # node scripts/smoke.ts — expect 51 "ok" lines, exit 0
+npm test            # node --test tests/*.test.ts — expect 168 passing
+npm run smoke       # node scripts/smoke.ts — expect 53 "ok" lines, exit 0
 ```
 
 There are no build/lint/format scripts — do not add a build step. Canonical
@@ -139,17 +139,18 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 
 - Runner: `node:test` `describe`/`it` with `node:assert/strict`. Zero third-party
   test deps. New file `tests/<module>.test.ts` matching a src module name is
-- Suite map: `config.test.ts` (29 — inert rule, layers, coercion incl.
-  explicit-empty arrays and degenerate values, non-object top levels, tokens),
-  `dashboard.test.ts` (46 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
-  and wide-glyph truncation, emptied-column frames),
-  `host.test.ts` (36 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
-  detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam),
-  `lifecycle.test.ts` (41 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
+- Suite map: `config.test.ts` (31 — inert rule, layers, coercion incl.
+  explicit-empty arrays and degenerate values, non-object top levels, tokens,
+  shadowed-project silence, injected clock),
+  `dashboard.test.ts` (49 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
+  and wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date),
+  `host.test.ts` (37 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
+  detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset),
+  `lifecycle.test.ts` (43 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
   claim/steady-state/escape-hatch/give-up incl. failure paths (`get` throw) and non-TUI
-  toggles),
+  toggles, concurrent-refresh single repaint and branch landing),
   `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
-  write-failure marker retention). Total 160.
+  write-failure marker retention). Total 168.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

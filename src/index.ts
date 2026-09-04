@@ -34,6 +34,7 @@ import { makeDashboardComponent } from "./dashboard.ts";
 import { DEFAULT_CONFIG, loadConfig, type DashboardConfig, type LoadedConfig } from "./config.ts";
 import {
 	clearQuietOwnership,
+	detectUser,
 	fetchBranch,
 	fetchRecentSessions,
 	isOmpFamily,
@@ -44,6 +45,7 @@ import {
 	writeQuietOwnership,
 	WIDGET_KEY,
 	type DashboardState,
+	type SessionRow,
 } from "./host.ts";
 
 /** Dim line rendered inside the widget whenever we stack beside the built-in welcome on an omp-family host (takeover off, a manual /dashboard show, or a yielded escape hatch). Transient notify channels drop content presented around startup, so the hint lives in the widget itself. */
@@ -53,7 +55,7 @@ type MountMode = "header" | "widget" | null;
 
 function initialState(): DashboardState {
 	return {
-		user: process.env.USER ?? process.env.USERNAME ?? "?",
+		user: detectUser(),
 		cwd: "",
 		dir: "",
 		model: "Unknown",
@@ -85,20 +87,29 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 
 	async function refreshAsync(): Promise<void> {
 		const cwd = stateRef.current.cwd;
+		// The two fetches are independent (git spawn vs session listing) — run
+		// them concurrently instead of sequentially, then paint once. Each leg
+		// keeps its own failure isolation so one bad source can't drop the other.
+		const sessionCount = cfgRef.current.sessions;
+		const branchPromise = fetchBranch(api);
+		const sessionsPromise = fetchRecentSessions(cwd, sessionCount);
+		let branch: string | undefined;
+		let rows: SessionRow[] | undefined;
 		try {
-			const branch = await fetchBranch(api);
-			if (stateRef.current.cwd === cwd) stateRef.current.branch = branch;
-			dash.refresh();
+			branch = await branchPromise;
 		} catch {
 			// Branch is decorative; never surface fetch failures.
 		}
 		try {
-			const rows = await fetchRecentSessions(cwd, cfgRef.current.sessions);
-			if (stateRef.current.cwd === cwd) stateRef.current.sessions = rows;
-			dash.refresh();
+			rows = await sessionsPromise;
 		} catch {
 			// Sessions block degrades to empty; never fatal.
 		}
+		if (stateRef.current.cwd === cwd) {
+			if (branch !== undefined) stateRef.current.branch = branch;
+			if (rows !== undefined) stateRef.current.sessions = rows;
+		}
+		dash.refresh();
 	}
 
 	/**
@@ -117,6 +128,12 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			return;
 		}
 		const home = homedir();
+		// Yielded escape hatch first: it resolves from the marker file alone,
+		// so yielded users skip the host-package import on every launch.
+		if (readQuietOwnership(home)?.state === "yielded") {
+			stackAdvisory(); // escape hatch active: native welcome is back for good
+			return;
+		}
 		const settings = await loadHostSettings();
 		// Re-validate after the await: the dashboard may have been dismissed or
 		// toggled off, or config reloaded, while we were importing.
@@ -128,10 +145,6 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			return;
 		}
 		const existing = readQuietOwnership(home);
-		if (existing?.state === "yielded") {
-			stackAdvisory(); // escape hatch active: native welcome is back for good
-			return;
-		}
 		let previous: boolean;
 		try {
 			previous = settings.get("startup.quiet") === true;
@@ -241,36 +254,19 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 
 	}
 
-	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
+	/**
+	 * Shared session-route prelude: probe, load, warn. Returns undefined when
+	 * the surface can't show UI (ownership already handed back), null when no
+	 * config file exists — toggle mounts either way (explicit user action),
+	 * automatic routes mount only on a real LoadedConfig.
+	 */
+	function prepareRoute(ctx: ExtensionContextSubset): LoadedConfig | null | undefined {
 		if (!ctx.hasUI || ctx.mode !== "tui") {
 			void giveUpQuietOwnership();
-			return;
+			return undefined;
 		} // same surface rule as session routes, plus ownership bookkeeping
-		if (visible) {
-			unmount(ctx);
-			return;
-		}
-		dismissed = false; // explicit show overrides any earlier dismissal
 		// Re-probe every time: hosts may fire session_start more than once
 		// (upstream Pi: once against the runner's no-op UI, then the real TUI).
-		headerCapable = probeHeaderSupport(ctx.ui);
-
-		const loaded = loadConfig(ctx.cwd, homedir());
-		cfgRef.current = loaded ? loaded.cfg : DEFAULT_CONFIG;
-		configured = !!loaded && loaded.explicitKeys.size > 0;
-		for (const warning of loaded?.warnings ?? []) {
-			ctx.ui.notify(`omp-startup: ${warning}`, "warning");
-		}
-		stateRef.current = snapshotInfo(ctx, api);
-		void refreshAsync();
-		mount(ctx);
-	}
-
-	function handleSessionRoute(_event: HostEvent, ctx: ExtensionContextSubset): void {
-		if (!ctx.hasUI || ctx.mode !== "tui") {
-			void giveUpQuietOwnership();
-			return;
-		}
 		headerCapable = probeHeaderSupport(ctx.ui);
 
 		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, homedir());
@@ -282,6 +278,28 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		for (const warning of loaded?.warnings ?? []) {
 			ctx.ui.notify(`omp-startup: ${warning}`, "warning");
 		}
+		return loaded;
+	}
+
+	function snapshotAndRefresh(ctx: ExtensionContextSubset): void {
+		stateRef.current = snapshotInfo(ctx, api);
+		void refreshAsync();
+	}
+
+	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
+		if (prepareRoute(ctx) === undefined) return;
+		if (visible) {
+			unmount(ctx);
+			return;
+		}
+		dismissed = false; // explicit show overrides any earlier dismissal
+		snapshotAndRefresh(ctx);
+		mount(ctx);
+	}
+
+	function handleSessionRoute(_event: HostEvent, ctx: ExtensionContextSubset): void {
+		const loaded = prepareRoute(ctx);
+		if (loaded === undefined) return;
 
 		// Inert rule: no config files anywhere, or none of them carry a
 		// recognized key → leave every native surface untouched. (The probe
@@ -297,8 +315,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		// launch must still render a single clean dashboard.
 		if (dismissed) return;
 
-		stateRef.current = snapshotInfo(ctx, api);
-		void refreshAsync();
+		snapshotAndRefresh(ctx);
 
 		// Config may rename the command; try to register an alias (best effort —
 		// late registration is not guaranteed on every host; /dashboard remains).

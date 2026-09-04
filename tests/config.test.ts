@@ -111,6 +111,23 @@ describe("config: layer discovery", () => {
 		}
 	});
 
+	it("ignores the shadowed .pi file entirely once .omp exists", () => {
+		const fx = withDirs({ project: { greeting: "FromOmp" } });
+		mkdirSync(join(fx.cwd, ".pi"), { recursive: true });
+		writeFileSync(join(fx.cwd, ".pi", "dashboard.json"), "{ not json");
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.equal(loaded.cfg.greeting, "FromOmp");
+			assert.ok(
+				loaded.warnings.every(w => !w.includes(".pi")),
+				`shadowed file must stay silent: ${loaded.warnings.join("; ")}`,
+			);
+		} finally {
+			fx.dispose();
+		}
+	});
+
 	it("project keys override user keys; user-only keys still apply", () => {
 		const fx = withDirs({
 			project: { greeting: "ProjectWins" },
@@ -409,6 +426,11 @@ describe("expandTokens", () => {
 	it("produces stable date/time shapes", () => {
 		assert.match(expandTokens("{date}", snap), /^\d{4}-\d{2}-\d{2}$/);
 		assert.match(expandTokens("{time}", snap), /^\d{2}:\d{2}$/);
+	});
+
+	it("expands date/time from an injected clock", () => {
+		const now = new Date(2026, 8, 4, 9, 5);
+		assert.equal(expandTokens("{date} {time} {time}", snap, now), "2026-09-04 09:05 09:05");
 	});
 });
 

@@ -103,8 +103,8 @@ no version sniffing; if either host changes, the plugin adapts.
 ```sh
 npm install         # dev-only tooling
 npm run typecheck   # strict tsc --noEmit (src + scripts + tests)
-npm run smoke       # 51 host-free render/probe/token/seam assertions
-npm test            # 160-assertion suite on node:test
+npm run smoke       # 53 host-free render/probe/token/seam assertions
+npm test            # 168-assertion suite on node:test
 ```
 
 Zero runtime dependencies; hosts load the TypeScript sources as-is.
