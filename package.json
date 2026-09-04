@@ -37,11 +37,13 @@
 	"type": "module",
 	"license": "MIT",
 	"omp": {
+		"description": "Custom startup dashboard for omp and Pi coding agents.",
 		"extensions": [
 			"./src/index.ts"
 		]
 	},
 	"pi": {
+		"description": "Custom startup dashboard for omp and Pi coding agents.",
 		"extensions": [
 			"./src/index.ts"
 		]
