@@ -71,6 +71,30 @@ describe("config: inert rule", () => {
 			fixture.dispose();
 		}
 	});
+
+	it("treats an untraversable project path as absent (ENOTDIR, no warning)", () => {
+		const fixture = withDirs({});
+		try {
+			writeFileSync(join(fixture.cwd, ".omp"), "not a dir");
+			const loaded = loadConfig(fixture.cwd, fixture.home);
+			assert.equal(loaded, null);
+		} finally {
+			fixture.dispose();
+		}
+	});
+
+	it("warns on a directory at the config path (EISDIR) without keys", () => {
+		const fixture = withDirs({});
+		try {
+			mkdirSync(join(fixture.cwd, ".omp", "dashboard.json"), { recursive: true });
+			const loaded = loadConfig(fixture.cwd, fixture.home);
+			assert.ok(loaded);
+			assert.equal(loaded.explicitKeys.size, 0);
+			assert.ok(loaded.warnings.some(w => w.includes("invalid JSON")));
+		} finally {
+			fixture.dispose();
+		}
+	});
 });
 
 describe("config: layer discovery", () => {

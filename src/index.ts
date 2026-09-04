@@ -84,15 +84,54 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	/** True when a config file with ≥1 recognized key exists — manual
 	 *  /dashboard shows on unconfigured projects must stay fully read-only. */
 	let configured = false;
+	/** Home dir captured once per route and shared by the config load, marker
+	 *  checks, and quiet-ownership flows (one homedir() per route, and a
+	 *  consistent view even if the environment shifted mid-route). */
+	let routeHome = "";
+	/** Ownership-marker state at route time, so mount can prime sync-known
+	 *  hints before first paint. claimQuietOwnership keeps its own post-await
+	 *  re-read for freshness; this is paint-priming only. */
+	let routeYielded = false;
+
+	/** True when any token-expanded string can show the git branch. Shortcut
+	 *  labels never expand tokens (rendered raw), so they are excluded. */
+	function branchVisible(cfg: DashboardConfig): boolean {
+		return (
+			cfg.title.includes("{branch}") ||
+			cfg.greeting.includes("{branch}") ||
+			cfg.info.some(row => row.includes("{branch}")) ||
+			cfg.quote.some(row => row.includes("{branch}"))
+		);
+	}
+
+	/** True when the sessions block renders: named in a visible column with a
+	 *  nonzero row count (buildBlock drops it otherwise). */
+	function sessionsVisible(cfg: DashboardConfig): boolean {
+		return cfg.sessions > 0 && (cfg.left.includes("sessions") || cfg.right.includes("sessions"));
+	}
+
+	function sameSessions(a: SessionRow[], b: SessionRow[]): boolean {
+		return (
+			a.length === b.length &&
+			a.every((row, index) => row.name === b[index]?.name && row.timeAgo === b[index]?.timeAgo)
+		);
+	}
 
 	async function refreshAsync(): Promise<void> {
 		const cwd = stateRef.current.cwd;
+		const cfg = cfgRef.current;
+		// Fetch only what the frame can show: a git spawn plus a host-package
+		// import and session-dir scan on every launch is pure waste when the
+		// results have nowhere to render. Neither leg blocks first paint
+		// (mount already happened); skipping them also skips their repaint.
+		const wantBranch = branchVisible(cfg);
+		const wantSessions = sessionsVisible(cfg);
+		if (!wantBranch && !wantSessions) return;
 		// The two fetches are independent (git spawn vs session listing) — run
 		// them concurrently instead of sequentially, then paint once. Each leg
 		// keeps its own failure isolation so one bad source can't drop the other.
-		const sessionCount = cfgRef.current.sessions;
-		const branchPromise = fetchBranch(api);
-		const sessionsPromise = fetchRecentSessions(cwd, sessionCount);
+		const branchPromise = wantBranch ? fetchBranch(api) : Promise.resolve(undefined);
+		const sessionsPromise = wantSessions ? fetchRecentSessions(cwd, cfg.sessions) : Promise.resolve(undefined);
 		let branch: string | undefined;
 		let rows: SessionRow[] | undefined;
 		try {
@@ -105,11 +144,19 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		} catch {
 			// Sessions block degrades to empty; never fatal.
 		}
-		if (stateRef.current.cwd === cwd) {
-			if (branch !== undefined) stateRef.current.branch = branch;
-			if (rows !== undefined) stateRef.current.sessions = rows;
+		if (stateRef.current.cwd !== cwd) return; // stale route: a newer route owns the frame
+		let changed = false;
+		if (branch !== undefined && branch !== stateRef.current.branch) {
+			stateRef.current.branch = branch;
+			changed = true;
 		}
-		dash.refresh();
+		if (rows !== undefined && !sameSessions(stateRef.current.sessions, rows)) {
+			stateRef.current.sessions = rows;
+			changed = true;
+		}
+		// Steady state (branch "" outside a repo, empty session list) used to
+		// repaint an identical frame on every route — skip it.
+		if (changed) dash.refresh();
 	}
 
 	/**
@@ -123,15 +170,19 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		if (!configured) {
 			// Unconfigured project: the inert contract wins even for explicit
 			// toggles. Stacking is permanent here (nothing will ever own quiet),
-			// so say so instead of silently duplicating the welcome.
-			stackAdvisory();
+			// so say so instead of silently duplicating the welcome. Mount
+			// already primed this hint pre-paint; skip the second refresh.
+			if (stateRef.current.hint !== QUIET_ADVISORY) stackAdvisory();
 			return;
 		}
-		const home = homedir();
+		// Home captured at route time: the marker decision reflects this route's view.
+		const home = routeHome;
 		// Yielded escape hatch first: it resolves from the marker file alone,
 		// so yielded users skip the host-package import on every launch.
 		if (readQuietOwnership(home)?.state === "yielded") {
-			stackAdvisory(); // escape hatch active: native welcome is back for good
+			// Escape hatch active: native welcome is back for good. Pre-primed
+			// by mount; skip the redundant repaint when it is.
+			if (stateRef.current.hint !== QUIET_ADVISORY) stackAdvisory();
 			return;
 		}
 		const settings = await loadHostSettings();
@@ -203,7 +254,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	 * awaited flush always completes while the process is fully alive.
 	 */
 	async function giveUpQuietOwnership(): Promise<void> {
-		const home = homedir();
+		const home = routeHome;
 		const existing = readQuietOwnership(home);
 		if (!existing) return;
 		if (existing.state === "owned") {
@@ -220,24 +271,31 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	}
 
 	function mount(ctx: ExtensionContextSubset): void {
+		// Stacked over a built-in welcome (omp-family host) without takeover:
+		// point at the setting that would replace it. omp exposes VERSION
+		// (older builds may omit it — then the "omp" binary heuristic in
+		// isOmpFamily still matches); upstream Pi exposes neither, and its
+		// own quietStartup key differs — so gate the hint on omp-family.
+		const stackedOmpWelcome = !headerCapable && isOmpFamily(stateRef.current.version, stateRef.current.app);
+		// Sync-known advisories resolved BEFORE the factory is handed out, so
+		// even a synchronous first render paints them: takeover-off stacking
+		// (as before), plus the unconfigured and yielded cases claim used to
+		// attach one refresh later with identical pixels.
+		const widgetHint =
+			stackedOmpWelcome && (!cfgRef.current.replaceNativeWelcome || !configured || routeYielded)
+				? QUIET_ADVISORY
+				: undefined;
 		if (headerCapable && cfgRef.current.replaceNativeWelcome) {
+			stateRef.current.hint = undefined;
 			ctx.ui.setHeader(dash.factory);
 			mountMode = "header";
-			stateRef.current.hint = undefined;
 			// Pi route on a machine whose global config we may have claimed
 			// earlier: hand quiet back while the session is fully alive.
 			void giveUpQuietOwnership();
 		} else {
+			stateRef.current.hint = widgetHint;
 			ctx.ui.setWidget(WIDGET_KEY, dash.factory, { placement: "aboveEditor" });
 			mountMode = "widget";
-			// Stacked over a built-in welcome (omp-family host) without takeover:
-			// point at the setting that would replace it. omp exposes VERSION
-			// (older builds may omit it — then the "omp" binary heuristic in
-			// isOmpFamily still matches); upstream Pi exposes neither, and its
-			// own quietStartup key differs — so gate the hint on omp-family.
-			const stackedOmpWelcome = !headerCapable && isOmpFamily(stateRef.current.version, stateRef.current.app);
-			stateRef.current.hint =
-				stackedOmpWelcome && !cfgRef.current.replaceNativeWelcome ? QUIET_ADVISORY : undefined;
 		}
 		visible = true;
 		void claimQuietOwnership();
@@ -261,6 +319,9 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	 * automatic routes mount only on a real LoadedConfig.
 	 */
 	function prepareRoute(ctx: ExtensionContextSubset): LoadedConfig | null | undefined {
+		// One home read per route, shared by the config load, the marker check
+		// below, and the ownership flows (all run at route time or capture it).
+		routeHome = homedir();
 		if (!ctx.hasUI || ctx.mode !== "tui") {
 			void giveUpQuietOwnership();
 			return undefined;
@@ -269,9 +330,12 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		// (upstream Pi: once against the runner's no-op UI, then the real TUI).
 		headerCapable = probeHeaderSupport(ctx.ui);
 
-		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, homedir());
+		const loaded: LoadedConfig | null = loadConfig(ctx.cwd, routeHome);
 		cfgRef.current = loaded?.cfg ?? DEFAULT_CONFIG;
 		configured = !!loaded && loaded.explicitKeys.size > 0;
+		// Sync marker read for pre-paint hint priming in mount (claim keeps
+		// its own post-await re-read for freshness).
+		routeYielded = readQuietOwnership(routeHome)?.state === "yielded";
 
 		// Warnings describe the user's own config files (broken JSON, unknown
 		// keys, invalid values) — surface them even when nothing is mountable.

@@ -910,11 +910,12 @@ describe("lifecycle: session routes (switch/branch/tree)", () => {
 	});
 });
 describe("lifecycle: concurrent async refresh", () => {
-	it("settles branch and sessions into a single repaint", async () => {
-		const project = scratchProject({ greeting: "Ahoy!" });
+	it("settles concurrent branch and sessions legs into a single repaint", async () => {
+		const project = scratchProject({ greeting: "hi {branch}" });
 		try {
 			// Pi header route (no VERSION): no quiet-ownership refreshes involved.
 			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			h.api.api.exec = async () => ({ stdout: "feature-x\n", stderr: "", code: 0 });
 			let paints = 0;
 			const countingTui = { requestRender() { paints++; } };
 			const ui = h.ctx.ui;
@@ -932,9 +933,107 @@ describe("lifecycle: concurrent async refresh", () => {
 			await drain();
 			await drain();
 			await drain();
-			assert.equal(paints, 1, "branch+sessions must settle into a single repaint");
+			assert.equal(paints, 1, "branch change must repaint exactly once");
 		} finally {
 			project.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("skips the repaint when async results match current state", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			// Default mock exec fails (code 128 → branch "") and the session
+			// listing degrades to [] — both equal the snapshot, so no repaint.
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			let paints = 0;
+			const countingTui = { requestRender() { paints++; } };
+			const ui = h.ctx.ui;
+			h.ctx.ui = {
+				...ui,
+				setHeader(factory: DashboardComponentFactory | undefined) {
+					ui.setHeader(factory);
+					factory?.(countingTui, INLINE_THEME)?.render(100);
+				},
+			};
+			await h.sessionStart();
+			for (let i = 0; i < 20; i++) await drain();
+			assert.equal(paints, 0, "identical branch/sessions must not repaint");
+		} finally {
+			project.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("skips the git spawn when no visible string uses {branch}", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			await h.sessionStart();
+			for (let i = 0; i < 20; i++) await drain();
+			assert.equal(h.api.execCalls.length, 0, "no {branch} on screen means no git spawn");
+		} finally {
+			project.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("does no async work when neither branch nor sessions are visible", async () => {
+		const project = scratchProject({ greeting: "Ahoy!", left: ["greeting"], right: ["shortcuts"] });
+		try {
+			const h = boot({ headerMode: "sync", cwd: project.cwd });
+			let paints = 0;
+			const countingTui = { requestRender() { paints++; } };
+			const ui = h.ctx.ui;
+			h.ctx.ui = {
+				...ui,
+				setHeader(factory: DashboardComponentFactory | undefined) {
+					ui.setHeader(factory);
+					factory?.(countingTui, INLINE_THEME)?.render(100);
+				},
+			};
+			await h.sessionStart();
+			for (let i = 0; i < 20; i++) await drain();
+			assert.equal(h.api.execCalls.length, 0, "hidden branch means no git spawn");
+			assert.equal(paints, 0, "nothing async visible means no fetch and no repaint");
+		} finally {
+			project.dispose();
+			setHostSettingsForTest(null);
+		}
+	});
+
+	it("primes the yielded advisory before first paint", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		seedOwnership(false, "yielded");
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			let paints = 0;
+			let firstLines = "";
+			const countingTui = { requestRender() { paints++; } };
+			const ui = h.ctx.ui;
+			h.ctx.ui = {
+				...ui,
+				setWidget(
+					key: string,
+					content: string[] | DashboardComponentFactory | undefined,
+					opts?: { placement?: "aboveEditor" | "belowEditor" },
+				) {
+					ui.setWidget(key, content, opts);
+					// Render at install time with the counting TUI so the
+					// first paint's content and any late refresh land here.
+					const factory = content as unknown as
+						| ((t: unknown, th: unknown) => { render(width: number): string[] })
+						| undefined;
+					firstLines = factory?.(countingTui, INLINE_THEME)?.render(100).join("\n") ?? "";
+				},
+			};
+			await h.sessionStart();
+			for (let i = 0; i < 20; i++) await drain();
+			assert.ok(firstLines.includes("replaceNativeWelcome"), "advisory present on the very first paint");
+			assert.equal(paints, 0, "primed hint must not cost a second refresh");
+		} finally {
+			project.dispose();
+			dropOwnership();
 			setHostSettingsForTest(null);
 		}
 	});

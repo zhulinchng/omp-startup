@@ -78,7 +78,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 168 passing
+npm test            # node --test tests/*.test.ts — expect 174 passing
 npm run smoke       # node scripts/smoke.ts — expect 53 "ok" lines, exit 0
 ```
 
@@ -139,18 +139,19 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 
 - Runner: `node:test` `describe`/`it` with `node:assert/strict`. Zero third-party
   test deps. New file `tests/<module>.test.ts` matching a src module name is
-- Suite map: `config.test.ts` (31 — inert rule, layers, coercion incl.
+- Suite map: `config.test.ts` (33 — inert rule, layers, coercion incl.
   explicit-empty arrays and degenerate values, non-object top levels, tokens,
-  shadowed-project silence, injected clock),
+  shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning),
   `dashboard.test.ts` (49 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
   and wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date),
   `host.test.ts` (37 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
   detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset),
-  `lifecycle.test.ts` (43 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
+  `lifecycle.test.ts` (47 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
   claim/steady-state/escape-hatch/give-up incl. failure paths (`get` throw) and non-TUI
-  toggles, concurrent-refresh single repaint and branch landing),
+  toggles, concurrent-refresh single repaint and branch landing, gated async
+  fetches, conditional repaint, primed first-paint advisory),
   `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
-  write-failure marker retention). Total 168.
+  write-failure marker retention). Total 174.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

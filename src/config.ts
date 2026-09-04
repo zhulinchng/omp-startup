@@ -10,7 +10,7 @@
  * `loadConfig` returns null and the extension must not touch any UI surface.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type BlockName = "greeting" | "logo" | "blank" | "info" | "shortcuts" | "sessions";
@@ -105,10 +105,22 @@ interface RawLayer {
 }
 
 function readLayer(file: string, warnings: string[]): RawLayer {
-	if (!existsSync(file)) return { file, data: undefined };
+	let text: string;
+	try {
+		// One syscall, not two: a missing file (or an untraversable path)
+		// surfaces as ENOENT/ENOTDIR and means "no layer" — exactly what the
+		// old existsSync gate reported. Anything else (permissions, EISDIR
+		// on a directory path, …) keeps the "exists but unreadable" path below.
+		text = readFileSync(file, "utf8");
+	} catch (error) {
+		const code = (error as { code?: unknown } | null)?.code;
+		if (code === "ENOENT" || code === "ENOTDIR") return { file, data: undefined };
+		warnings.push(`${file}: invalid JSON (${String(error)})`);
+		return { file, data: {} };
+	}
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(file, "utf8"));
+		parsed = JSON.parse(text);
 	} catch (error) {
 		// The file exists but is unreadable: keep it in the layer set (so
 		// loadConfig reports warnings rather than claiming full inertness)
