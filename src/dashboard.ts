@@ -129,9 +129,28 @@ function fitToWidth(text: string, width: number): string {
 
 function centerText(text: string, width: number): string {
 	const visLen = visibleWidth(text);
-	if (visLen >= width) return truncateOverflow(text, width);
+	if (visLen > width) return truncateOverflow(text, width);
 	const leftPad = Math.floor((width - visLen) / 2);
 	return padding(leftPad) + text + padding(width - visLen - leftPad);
+}
+
+const MARKER_PATTERN = /\x01[^\x01\x02]*\x02/g;
+
+/**
+ * Widest laid-out left-column line in terminal cells. Markers carry no cells
+ * (stripped first); SGR runs from the logo gradient are skipped by
+ * visibleWidth. Drives the left-column minimum so a wide logo or model name
+ * widens its box instead of truncating.
+ */
+function maxLeftContentWidth(blocks: BlockLines[]): number {
+	let max = 0;
+	for (const block of blocks) {
+		for (const line of block.lines) {
+			const width = visibleWidth(line.replace(MARKER_PATTERN, ""));
+			if (width > max) max = width;
+		}
+	}
+	return max;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +300,12 @@ interface ColumnGeometry {
 }
 
 /** Column math mirrors oh-my-pi welcome.ts #renderLines. */
-function computeGeometry(cfg: DashboardConfig, termWidth: number, hasRightBlocks: boolean): ColumnGeometry | undefined {
+function computeGeometry(
+	cfg: DashboardConfig,
+	termWidth: number,
+	hasRightBlocks: boolean,
+	leftContentWidth = 0,
+): ColumnGeometry | undefined {
 	const boxWidth = Math.min(cfg.width, Math.max(0, termWidth - 2));
 	if (boxWidth < 4) return undefined;
 
@@ -289,7 +313,7 @@ function computeGeometry(cfg: DashboardConfig, termWidth: number, hasRightBlocks
 	const preferredLeftCol = 26;
 	const minLeftCol = 12; // logo width
 	const minRightCol = 20;
-	const leftMinContentWidth = Math.max(minLeftCol, visibleWidth(cfg.greeting));
+	const leftMinContentWidth = Math.max(minLeftCol, visibleWidth(cfg.greeting), leftContentWidth);
 
 	const desiredLeftCol = Math.max(
 		Math.min(preferredLeftCol, Math.max(minLeftCol, Math.floor(dualContentWidth * 0.35))),
@@ -492,9 +516,9 @@ export function renderDashboard(
 	}
 
 	const rightBlocks = buildAll(rightList);
-	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0);
-	if (!geometry) return [];
 	const leftBlocks = buildAll(leftList);
+	const geometry = computeGeometry(cfg, termWidth, rightBlocks.length > 0, maxLeftContentWidth(leftBlocks));
+	if (!geometry) return [];
 	const lines = assembleBox(leftBlocks, rightBlocks, geometry, cfg, state, theme, now);
 	return [
 		...lines,

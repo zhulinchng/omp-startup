@@ -185,6 +185,37 @@ describe("dashboard: responsive geometry", () => {
 	});
 });
 
+describe("dashboard: left column scales to content", () => {
+	it("widens for a custom logo wider than the preferred column", () => {
+		const art = `antes-de-ontem-artwork-${"x".repeat(20)}`;
+		const lines = render({ logo: [art], gradient: false }, STATE);
+		assert.ok(stripAll(lines).some(l => l.includes(art)), "wide logo line truncated");
+		for (const line of lines) assert.ok(visibleWidth(line) <= 100, `overflow: ${stripAnsi(line)}`);
+	});
+
+	it("widens for a long model name instead of truncating it", () => {
+		const model = `claude-opus-4-6-${"y".repeat(30)}`;
+		const lines = render({ info: ["{model}"] }, makeState({ model }));
+		assert.ok(stripAll(lines).join("\n").includes(model), "model name truncated");
+		for (const line of lines) assert.ok(visibleWidth(line) <= 100, `overflow: ${stripAnsi(line)}`);
+	});
+
+	it("drops the right column rather than truncating wide left content", () => {
+		const art = `Z${"z".repeat(78)}`; // 79 cells: cannot share a 95-cell row with the 20-cell right minimum
+		const lines = render({ logo: [art], gradient: false }, STATE);
+		const flat = stripAll(lines).join("\n");
+		assert.ok(flat.includes(art), "wide logo line truncated");
+		assert.ok(!flat.includes("Tips"), "right column should yield to wide left content");
+		for (const line of lines) assert.ok(visibleWidth(line) <= 100, `overflow: ${stripAnsi(line)}`);
+	});
+
+	it("keeps the default two-column split when content fits", () => {
+		const flat = stripAll(render(undefined, STATE)).join("\n");
+		assert.ok(flat.includes("┬"), "expected the two-column tee with default content");
+		assert.ok(flat.includes("Tips"));
+	});
+});
+
 describe("dashboard: duplicate block names across columns", () => {
 	it("right column drops blocks already present in left", () => {
 		const lines = render(

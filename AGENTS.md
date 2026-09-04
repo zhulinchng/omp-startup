@@ -78,7 +78,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 174 passing
+npm test            # node --test tests/*.test.ts — expect 178 passing
 npm run smoke       # node scripts/smoke.ts — expect 53 "ok" lines, exit 0
 ```
 
@@ -118,8 +118,9 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
   `docs/USAGE.md` must equal it — guarded by `tests/config.test.ts`),
   `KNOWN_KEYS`, coercion functions.
 - `src/dashboard.ts` — geometry constants mirroring omp `welcome.ts`
-  (preferredLeftCol 26, minLeftCol 12, minRightCol 20, 35% split), block
-  builders, gradient stops.
+  (preferredLeftCol 26, minLeftCol 12, minRightCol 20, 35% split) plus a
+  content-fit left minimum (widest laid-out left line), block builders,
+  gradient stops.
 - `package.json` / `tsconfig.json` / `types.d.ts` — dual manifest, strictness
   flags, ambient API subset.
 - `tests/helpers.ts`, `scripts/smoke.ts` — fixtures and verification harnesses.
@@ -142,7 +143,8 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 - Suite map: `config.test.ts` (33 — inert rule, layers, coercion incl.
   explicit-empty arrays and degenerate values, non-object top levels, tokens,
   shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning),
-  `dashboard.test.ts` (49 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
+  `dashboard.test.ts` (53 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, content-fit left column and
+  centerText exact-fit, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
   and wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date),
   `host.test.ts` (37 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
   detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset),
@@ -151,7 +153,7 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
   toggles, concurrent-refresh single repaint and branch landing, gated async
   fetches, conditional repaint, primed first-paint advisory),
   `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
-  write-failure marker retention). Total 174.
+  write-failure marker retention). Total 178.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

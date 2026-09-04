@@ -266,8 +266,12 @@ theme last, keeping builders theme-free and snapshot-testable.
 Geometry replicates the native omp welcome (`welcome.ts #renderLines`):
 max width from config, left column preferred 26/min 12, right column min 20,
 35% split heuristic, single-column fallback below the breakpoint, rounded
-border with embedded title and column tee (`┬`). All box rows share one total
-visible width (asserted per row in tests).
+border with embedded title and column tee (`┬`). On top of the native floor,
+the left minimum also covers the widest laid-out left line (logo art, greeting,
+info rows — markers/SGR excluded), so a long logo or model name widens its box
+instead of truncating; when even that minimum cannot share the row with the
+right-column minimum, the right column yields and the left takes full width.
+All box rows share one total visible width (asserted per row in tests).
 
 Placement semantics: **the list that references a block decides where it
 renders.** A block named in both lists renders once, on the left. `plain`
@@ -302,7 +306,7 @@ Documented deliberately; none affect the inert rule.
 
 | Layer | Mechanism |
 |---|---|
-| Unit | `node --test tests/*.test.ts` — 174 assertions: inert rule, layers, coercion incl. explicit-empty arrays and degenerate values, tokens, shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning, single-syscall layer reads, geometry invariants, lone-ESC/wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured read-only toggles, concurrent-refresh single repaint and branch landing, gated async fetches, conditional repaint, primed first-paint advisory |
+| Unit | `node --test tests/*.test.ts` — 178 assertions: inert rule, layers, coercion incl. explicit-empty arrays and degenerate values, tokens, shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning, single-syscall layer reads, geometry invariants incl. content-fit left column and centerText exact-fit, lone-ESC/wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured read-only toggles, concurrent-refresh single repaint, gated async fetches, conditional repaint, primed first-paint advisory |
 | Smoke | `scripts/smoke.ts` — 53 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, quiet-ownership seam, gradient-memo repaint, injected clock) |
 | Types | `tsc --noEmit` strict, including `tests/` |
 | CI | GitHub Actions (`.github/workflows/ci.yml`): same gates on Node 24 + 26 for every push/PR; `publish-gpr.yml` re-runs the gates in a blocking job before mirroring a release to GitHub Packages as `@zhulinchng/omp-startup` |
