@@ -200,16 +200,19 @@ function buildBlock(name: string, cfg: DashboardConfig, state: DashboardState): 
 			if (art.length === 0) return undefined;
 			return { lines: art };
 		}
-		case "info": {
-			if (cfg.info.length === 0) return undefined;
-			const rows = cfg.info.map((row, index) => {
-				const text = expandTokens(row, state);
-				// Alternating muted/borderMuted reproduces the native model/provider styling.
-				const color = index % 2 === 0 ? "muted" : "borderMuted";
-				return text === "" ? "" : `${MARKER_OPEN}${color}${MARKER_CLOSE}${text}`;
-			});
-			return { lines: rows };
-		}
+	case "info": {
+		if (cfg.info.length === 0) return undefined;
+		const rows: string[] = [];
+		cfg.info.forEach((row, index) => {
+			const text = expandTokens(row, state);
+			if (text === "") return; // empty expansion contributes no row (unlike "blank")
+			// Alternating muted/borderMuted reproduces the native model/provider styling.
+			const color = index % 2 === 0 ? "muted" : "borderMuted";
+			rows.push(`${MARKER_OPEN}${color}${MARKER_CLOSE}${text}`);
+		});
+		if (rows.length === 0) return undefined;
+		return { lines: rows };
+	}
 		case "shortcuts": {
 			if (cfg.shortcuts.length === 0) return undefined;
 			const rows = cfg.shortcuts.map(
@@ -310,8 +313,12 @@ function buildQuoteLine(cfg: DashboardConfig, state: DashboardState, theme: Dash
 	if (cfg.quote.length === 0) return [];
 	const picked = pickQuote(cfg.quote);
 	if (!picked) return [];
-	const text = expandTokens(picked, state);
-	return [` ${theme.fg("dim", `\x1b[3m${truncateToWidth(text, Math.max(1, width - 2))}\x1b[23m`)}`];
+	const budget = Math.max(1, width - 2);
+	// A quote carrying embedded newlines must not inject a raw line break
+	// into a single widget line (observed: box border split mid-render).
+	return expandTokens(picked, state)
+		.split("\n")
+		.map(part => ` ${theme.fg("dim", `\x1b[3m${truncateToWidth(part, budget)}\x1b[23m`)}`);
 }
 
 function renderRightColumn(blocks: BlockLines[], width: number, theme: DashboardTheme): string[] {
@@ -389,7 +396,6 @@ function assembleBox(
 	} else {
 		lines.push(theme.fg("dim", `╰${BORDER_H.repeat(geo.leftCol)}╯`));
 	}
-
 	return lines;
 }
 
@@ -403,18 +409,23 @@ function assemblePlain(blocks: BlockLines[], contentWidth: number, theme: Dashbo
 		}
 		if (pendingRight) lines.push("");
 		pendingRight = true;
-		lines.push(` ${theme.bold(theme.fg("accent", block.header))}`);
-		for (const line of block.lines) lines.push(` ${applyTheme(line, theme)}`);
+		lines.push(fitToWidth(` ${theme.bold(theme.fg("accent", block.header))}`, contentWidth));
+		// Right-column rows are full-length strings (e.g. "# for prompt
+		// actions" at 21 cells); box layout truncates them via fitToWidth,
+		// so plain must too — otherwise narrow terminals overflow (observed
+		// at termWidth 10–20 with the default shortcuts block).
+		for (const line of block.lines) lines.push(fitToWidth(` ${applyTheme(line, theme)}`, contentWidth));
 	}
 	while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 	return lines;
 }
-
-// ---------------------------------------------------------------------------
 /** Dim italic advisory under the box (widget-mode hint on non-header hosts). */
 function hintLine(state: DashboardState, theme: DashboardTheme, boxWidth: number): string[] {
 	if (!state.hint) return [];
-	return [` ${theme.fg("dim", `\x1b[3m${truncateToWidth(state.hint, Math.max(1, boxWidth - 2))}\x1b[23m`)}`];
+	const budget = Math.max(1, boxWidth - 2);
+	return state.hint
+		.split("\n")
+		.map(part => ` ${theme.fg("dim", `\x1b[3m${truncateToWidth(part, budget)}\x1b[23m`)}`);
 }
 
 // Entry points

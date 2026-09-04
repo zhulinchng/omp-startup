@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { expandTokens, DEFAULT_CONFIG, loadConfig } from "../src/config.ts";
 import {
 	clearQuietOwnership,
+	isOmpFamily,
 	loadHostSettings,
 	probeHeaderSupport,
 	readQuietOwnership,
@@ -214,6 +215,7 @@ console.log("3. probe routing");
 	let invoked = false;
 	const piLikeUi = {
 		setHeader(factory: unknown) {
+			if (factory === undefined) return; // native-header restore succeeds
 			// Pi invokes the factory synchronously, then renders the component.
 			const component = (factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
 			component.render();
@@ -238,6 +240,26 @@ console.log("3. probe routing");
 		},
 	};
 	check("throwing setHeader → not header-capable", probeHeaderSupport(throwingUi as never) === false);
+}
+{
+	let installed = false;
+	const restoreThrowingUi = {
+		setHeader(factory: unknown) {
+			if (factory !== undefined) {
+				(factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
+				installed = true;
+			} else {
+				throw new Error("restore boom");
+			}
+		},
+	};
+	check(
+		"restore-throwing setHeader → widget route (no blank header)",
+		probeHeaderSupport(restoreThrowingUi as never) === false && installed,
+	);
+	check("omp-family matches VERSION hosts", isOmpFamily("18.0.1", ""));
+	check("omp-family matches VERSION-less omp binaries", isOmpFamily("", "omp"));
+	check("omp-family rejects VERSION-less Pi", isOmpFamily("", "pi") === false);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +332,24 @@ withTempHome(undefined, (cwd, home) => {
 	writeFileSync(join(home, ".config", "dashboard", ".ownership.json"), "{bogus");
 	check("corrupt marker reads as absent", readQuietOwnership(home) === undefined);
 });
+
+// ---------------------------------------------------------------------------
+console.log("7. renderer hardening");
+{
+	const multi = renderDashboard({ ...DEFAULT_CONFIG, quote: ["a\nb"] }, STATE, STUB_THEME, 100);
+	check(
+		"multiline quote stays in-box (no raw line break)",
+		!multi.some(line => line.includes("\n")) && multi.some(line => line.includes("a")),
+	);
+	const noEmpty = renderDashboard({ ...DEFAULT_CONFIG, info: ["{model}", ""] }, STATE, STUB_THEME, 100);
+	const oneRow = renderDashboard({ ...DEFAULT_CONFIG, info: ["{model}"] }, STATE, STUB_THEME, 100);
+	check("empty info rows skipped", noEmpty.length === oneRow.length);
+	const narrow = renderDashboard({ ...DEFAULT_CONFIG, layout: "plain" }, STATE, STUB_THEME, 20);
+	check(
+		"plain layout fits narrow terminals",
+		narrow.length > 0 && narrow.every(line => PLAIN([line])[0] !== undefined && [...(PLAIN([line])[0] ?? "")].length <= 20),
+	);
+}
 
 console.log(failures === 0 ? "\nAll smoke checks passed." : `\n${failures} smoke check(s) FAILED.`);
 process.exitCode = failures === 0 ? 0 : 1;

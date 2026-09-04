@@ -60,9 +60,10 @@ flowchart LR
 ```
 
 - `src/index.ts` — default-exported factory `(api: OmpStartupExtensionAPI) => void`.
-  Registers `/dashboard`, subscribes to `session_start` and
-  `before_agent_start`, owns mount state plus the quiet-ownership claim/give-up
-  flow.
+  Registers `/dashboard`, subscribes to `session_start`, `session_switch`,
+  `session_branch`, `session_tree` (one shared route handler) and
+  `before_agent_start`, owns mount state (`headerCapable`, `mountMode`,
+  `visible`, `dismissed`) plus the quiet-ownership claim/give-up flow.
 - `src/config.ts` — layered JSON loader with explicit-key tracking (drives the
   inert rule), per-key coercion with warnings, token expansion.
 - `src/host.ts` — everything host-shaped: capability probe, info snapshot,
@@ -99,27 +100,32 @@ const sentinel = (_tui, _theme) => {
 };
 try { ui.setHeader(sentinel); } catch { return false; }
 if (!invoked) return false;
-ui.setHeader(undefined);     // restore: Pi actually MOUNTED the sentinel
+try {
+    ui.setHeader(undefined); // restore: Pi actually MOUNTED the sentinel
+} catch { return false; }    // restore failed: sentinel still installed,
+                             // so take the widget route, not a blank header
 return true;
 ```
 
 The trailing restore call matters: on a header-capable host the sentinel
 displaced the built-in header, so probing must put it back or every
-inert/additive session would silently lose the native header.
+inert/additive session would silently lose the native header. When the restore
+itself throws, the native header is unrecoverable from here — returning `false`
+keeps a visible widget instead of a displaced (empty) header.
 
 Setting the flag inside the factory call (not inside `render()`) matters:
 Pi's `setExtensionHeader` invokes the factory but defers painting. The probe
-is re-run on every `session_start` and every `/dashboard` show, because hosts
-may emit `session_start` more than once against *different* UI contexts
-(installed Pi 0.84.2 fires it once, before its built-in header exists — so the
-probe correctly reports "no header capability" there and the plugin falls back
-to the additive widget).
+is re-run on every session route (`start`/`switch`/`branch`/`tree`) and every
+`/dashboard` show, because hosts may emit `session_start` more than once
+against *different* UI contexts (installed Pi 0.84.2 fires it once, before its
+built-in header exists — so the probe correctly reports "no header capability"
+there and the plugin falls back to the additive widget).
 
 Routing decision:
 
 ```mermaid
 flowchart TD
-    A["session_start"] --> B{"ctx.hasUI && ctx.mode === 'tui'?"}
+    A["session route<br/>(start / switch / branch / tree)"] --> B{"ctx.hasUI && ctx.mode === 'tui'?"}
     B -- no --> Z["return (print/rpc/json untouched)"]
     B -- yes --> C["probe setHeader capability"]
     C --> D["loadConfig(cwd, home)"]
@@ -129,8 +135,8 @@ flowchart TD
     F -- "no" --> Z3["NOTHING MOUNTED at startup:<br/>native welcome untouched;<br/>/dashboard mounts the widget on demand"]
     F -- yes --> G{"headerCapable?"}
     G -- yes --> H2["ui.setHeader(dashboard)<br/>in-place header replacement<br/>(dismiss restores)"]
-    G -- no --> H["ui.setWidget('omp-startup', …, aboveEditor)"]
-    H --> I{"omp-family host?<br/>(!headerCapable && VERSION present)"}
+    G -- no --> H["unmount previous surface,<br/>then ui.setWidget('omp-startup', …, aboveEditor)"]
+    H --> I{"omp-family host?<br/>(VERSION present, or omp binary)"}
     I -- yes --> J2["claimQuietOwnership(): set + flush startup.quiet=true<br/>(marker records the replaced value)"]
     I -- no --> K["no hint"]
 ```
@@ -138,16 +144,21 @@ flowchart TD
 ## 4. Lifecycle and state machine
 
 Per-session state lives in the factory closure: `headerCapable`, `mountMode`
-(`"header" | "widget" | null`), `visible`. Ownership of `startup.quiet` lives
-outside the process, in `~/.config/dashboard/.ownership.json`, so it survives
-restarts (see below).
+(`"header" | "widget" | null`), `visible`, `dismissed`. Ownership of
+`startup.quiet` lives outside the process, in
+`~/.config/dashboard/.ownership.json`, so it survives restarts (see below).
+`dismissed` is set by a `before_agent_start` dismissal and cleared only by an
+explicit `/dashboard` show, so revived/switched/branched sessions don't pop the
+dashboard back over the transcript; the previous surface is unmounted before
+every remount so a changed probe can't leave header and widget installed at once.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Loaded : extension loaded
-    Loaded --> Visible : session_start with config in TUI mode
-    Loaded --> Loaded : session_start without config means inert
+    Loaded --> Visible : session route with config in TUI mode
+    Loaded --> Loaded : session route without config means inert
     Visible --> Hidden : before_agent_start when dismiss enabled
+    Hidden --> Loaded : session route stays hidden while dismissed
     Hidden --> Visible : dashboard toggle command
     Visible --> Hidden : dashboard toggle command
 ```

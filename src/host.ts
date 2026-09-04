@@ -50,7 +50,11 @@ export function probeHeaderSupport(ui: ExtensionUiSubset): boolean {
 	try {
 		ui.setHeader(undefined);
 	} catch {
-		// Restore failure must not break routing decisions.
+		// Restore failed: the sentinel is still installed, displacing the
+		// native header. Route to the additive widget rather than leaving a
+		// blank header behind (observed with a sentinel-installing setHeader
+		// whose restore path throws).
+		return false;
 	}
 	return true;
 }
@@ -141,6 +145,17 @@ async function listViaHostPackage(cwd: string, count: number): Promise<SessionRo
 }
 
 /**
+ * omp-family predicate for the widget route: omp exposes VERSION while
+ * upstream Pi exports none, but older omp builds may also omit it — in that
+ * case the `{app}` heuristic (binary name "omp") still identifies the host.
+ * Quiet writes additionally require loadHostSettings() to succeed, so this
+ * predicate only widens the advisory path, never the write path alone.
+ */
+export function isOmpFamily(version: string, app: string): boolean {
+	return version !== "" || app === "omp";
+}
+
+/**
  * Map either host's session-listing rows to dashboard rows.
  * omp names sessions `title`, upstream Pi `name`; empty strings fall through
  * to the file basename. Exported for tests.
@@ -149,7 +164,7 @@ export function mapSessionInfos(
 	infos: Array<{ title?: string | undefined; name?: string | undefined; path: string; modified: Date }>,
 ): SessionRow[] {
 	return infos.map(info => ({
-		name: info.name || info.title || basename(info.path),
+		name: info.name || info.title || (typeof info.path === "string" ? basename(info.path) : "untitled"),
 		timeAgo: formatTimeAgo(info.modified),
 	}));
 }

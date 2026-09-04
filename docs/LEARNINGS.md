@@ -36,7 +36,10 @@ the binary for what ships today.
   handlers to finish before exiting. **Never perform durable writes there.**
   Verified live: an awaited restore inside `session_shutdown` regularly lost
   the race against process exit and left `startup.quiet: true` behind.
-  All durable writes now happen at `session_start` with an awaited flush.
+  All durable writes now happen on session routes with an awaited flush.
+- `session_switch` / `session_branch` / `session_tree` reach extensions with the same `(event, ctx)` shape, so one shared route handler covers launch, resume, switch, branch, and tree navigation. A `before_agent_start` dismissal is in-memory only — later automatic routes must check it explicitly or the dashboard pops back over the transcript (reproduced with double `session_start` + mock hosts).
+- A `setHeader` that installs the probe sentinel but throws on `setHeader(undefined)` leaves the native header displaced; routing to the widget in that case keeps a visible surface instead of a blank header (reproduced with mock hosts).
+- A throwing `settings.get("startup.quiet")` must degrade like an absent settings export (advisory, no marker, no write); otherwise the rejection escapes the fire-and-forget claim (reproduced with mock hosts).
 
 ## 3. Settings singleton gotchas
 

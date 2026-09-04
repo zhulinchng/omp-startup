@@ -14,6 +14,7 @@ import {
 	detectAppName,
 	fetchBranch,
 	fetchRecentSessions,
+	isOmpFamily,
 	loadHostSettings,
 	mapSessionInfos,
 	probeHeaderSupport,
@@ -291,5 +292,56 @@ describe("loadHostSettings flush passthrough", () => {
 		} finally {
 			setHostSettingsForTest(null);
 		}
+	});
+});
+
+describe("probeHeaderSupport restore failure", () => {
+	it("routes to the widget when the restore call throws (sentinel still installed)", () => {
+		const calls: unknown[] = [];
+		const ui = {
+			setHeader(factory: unknown) {
+				calls.push(factory);
+				if (factory !== undefined) {
+					(factory as (t: unknown, th: unknown) => { render(): string[] })(undefined, undefined);
+				} else {
+					throw new Error("restore boom");
+				}
+			},
+			setWidget() {},
+			notify() {},
+		};
+		assert.equal(probeHeaderSupport(ui as never), false);
+		assert.equal(calls.length, 2);
+	});
+});
+
+describe("isOmpFamily (widget-route host predicate)", () => {
+	it("matches VERSION-bearing hosts regardless of binary name", () => {
+		assert.equal(isOmpFamily("18.0.1", ""), true);
+		assert.equal(isOmpFamily("0.84.2", "pi"), true);
+	});
+
+	it("matches older omp builds via the binary heuristic when VERSION is absent", () => {
+		assert.equal(isOmpFamily("", "omp"), true);
+	});
+
+	it("rejects upstream Pi and unknown hosts without VERSION", () => {
+		assert.equal(isOmpFamily("", ""), false);
+		assert.equal(isOmpFamily("", "pi"), false);
+	});
+});
+
+describe("mapSessionInfos drift tolerance", () => {
+	it("falls back to untitled when a nameless row carries no path", () => {
+		const rows = mapSessionInfos([{ name: "", title: "", modified: new Date() } as never]);
+		assert.equal(rows[0]?.name, "untitled");
+	});
+
+	it("clamps future timestamps to just now", () => {
+		const rows = mapSessionInfos([
+			{ path: "/sessions/future.md", modified: new Date(Date.now() + 3_600_000) },
+		]);
+		assert.equal(rows[0]?.name, "future.md");
+		assert.equal(rows[0]?.timeAgo, "just now");
 	});
 });

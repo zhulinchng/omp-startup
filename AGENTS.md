@@ -29,24 +29,24 @@ Core contract (user-mandated, enforced by tests):
 
 | Module | Responsibility |
 |---|---|
-| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `before_agent_start`; owns mount state (`headerCapable`, `mountMode`, `visible`) plus the quiet-ownership flow (claimQuietOwnership/giveUpQuietOwnership; state persists in a marker file, not memory). |
+| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `session_switch` / `session_branch` / `session_tree` (one shared route handler) plus `before_agent_start`; owns mount state (`headerCapable`, `mountMode`, `visible`, `dismissed`) plus the quiet-ownership flow (claimQuietOwnership/giveUpQuietOwnership; state persists in a marker file, not memory). |
 | `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` — `null` only when **no config file exists anywhere**; files that exist but carry nothing recognized return defaults with empty `explicitKeys` plus warnings. Also `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
-| `src/host.ts` | Host abstraction, failure-tolerant: `probeHeaderSupport(ui)` (behavioral capability probe), `snapshotInfo(ctx, api)`, `fetchBranch(api)`, `fetchRecentSessions(cwd, count)`, `loadHostSettings()` (feature-detected host settings singleton incl. flush passthrough; `setHostSettingsForTest` seam), quiet-ownership marker helpers (`read/write/clearQuietOwnership`), `detectAppName()`, constant `WIDGET_KEY = "omp-startup"`. |
-| `src/dashboard.ts` | Pure renderer, no host imports: `renderDashboard(cfg, state, theme, termWidth)`, `makeDashboardComponent(stateRef, cfgRef)` → `{factory, refresh}`. ANSI-safe width math, 5-stop diagonal gradient, box/plain assembly. |
+| `src/host.ts` | Host abstraction, failure-tolerant: `probeHeaderSupport(ui)` (behavioral capability probe; a throwing restore routes to the widget instead of leaving a blank header), `isOmpFamily(version, app)` (VERSION present, or `omp` binary when older builds omit it), `snapshotInfo(ctx, api)`, `fetchBranch(api)`, `fetchRecentSessions(cwd, count)`, `mapSessionInfos` (nameless pathless rows degrade to `untitled`), `loadHostSettings()` (feature-detected host settings singleton incl. flush passthrough; `setHostSettingsForTest` seam), quiet-ownership marker helpers (`read/write/clearQuietOwnership`), `detectAppName()`, constant `WIDGET_KEY = "omp-startup"`. |
+| `src/dashboard.ts` | Pure renderer, no host imports: `renderDashboard(cfg, state, theme, termWidth)`, `makeDashboardComponent(stateRef, cfgRef)` → `{factory, refresh}`. ANSI-safe width math, 5-stop diagonal gradient, box/plain assembly. Plain right-column rows truncate like box cells; quote/hint split on embedded newlines; empty `info` expansions are skipped (unlike `blank` blocks). |
 | `types.d.ts` | Ambient declarations for the used host-API subset (`OmpStartupExtensionAPI`, `ExtensionUiSubset`, …). Typecheck-only; consumed at runtime by nothing. |
 
-Data flow on `session_start`: guard `ctx.hasUI && ctx.mode === "tui"` → probe
+Data flow on each session route (`session_start`, `session_switch`, `session_branch`, `session_tree` — one shared handler): guard `ctx.hasUI && ctx.mode === "tui"` → probe
 `setHeader` capability (restoring the native header immediately after a
-positive probe) → `loadConfig`; if null or `explicitKeys.size === 0` → return
+positive probe; a throwing restore routes to the widget instead) → `loadConfig`; if null or `explicitKeys.size === 0` → return
 before any mount (inert; warnings about the user's own files are still shown).
+If a `before_agent_start` dismissal set `dismissed`, return with ownership untouched (explicit `/dashboard` clears it).
 Otherwise: surface warnings once via `ctx.ui.notify(…, "warning")`, snapshot info,
 fire-and-forget `void refreshAsync()` (git branch + recent sessions mutate
 `stateRef`, then `dash.refresh()` → captured `tui.requestRender()`), then route:
 `cfg.replaceNativeWelcome === false` → mount nothing at startup (manual-only
 via `/dashboard`); header-capable && true → `ui.setHeader(factory)` (in-place
 header replacement, dismiss restores); otherwise → `ui.setWidget(WIDGET_KEY,
-factory, {placement:"aboveEditor"})`. On non-header hosts exposing `VERSION`
-(omp-family signal; upstream Pi exports none), a dim quiet-advisory line is
+factory, {placement:"aboveEditor"})`, unmounting the previous surface first so a changed probe can't leave both installed. On omp-family hosts (`VERSION` present, or `omp` binary for older builds; upstream Pi exposes neither), a dim quiet-advisory line is
 embedded in the widget render whenever we stack beside the native welcome
 (takeover off, e.g. a manual show).
 Quiet ownership (omp widget route only):
@@ -64,8 +64,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 
 - `src/` — all runtime code (4 modules above).
 - `tests/` — 5 suites: four mirroring src modules plus
-  `uninstall-reset.test.ts` for the postuninstall hook; shared `tests/helpers.ts`.
-- `scripts/smoke.ts` — host-free assertion pass (44 checks).
+- `scripts/smoke.ts` — host-free assertion pass (51 checks).
 - `scripts/uninstall-reset.js` — zero-dep postuninstall hook restoring owned `startup.quiet`; scoped to the `startup:` block of `~/.omp/agent/config.yml`.
 - `docs/` — `USAGE.md` (operator manual), `ARCHITECTURE.md` (maintainer reference),
   `LEARNINGS.md` (verified omp/Pi host-behavior facts and E2E recipes),
@@ -79,8 +78,8 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 136 passing
-npm run smoke       # node scripts/smoke.ts — expect 44 "ok" lines, exit 0
+npm test            # node --test tests/*.test.ts — expect 160 passing
+npm run smoke       # node scripts/smoke.ts — expect 51 "ok" lines, exit 0
 ```
 
 There are no build/lint/format scripts — do not add a build step. Canonical
@@ -106,12 +105,10 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
   (`stateRef.current.cwd === cwd`).
 - **Theming via inline markers**: builders emit `"\x01color\x02text"` spans
   (`MARKER_OPEN`/`MARKER_CLOSE`); `applyTheme(line, theme)` resolves them last,
-  keeping builders pure and snapshot-testable.
 - **Capability probe flags at factory-call time**, not render time — Pi invokes
   the factory synchronously while deferring paint; omp's `setHeader` is a no-op.
-  Re-probed on every `session_start` and `/dashboard` show.
-- **Absent config keys stay untouched**: `pick(key)` short-circuits before
-  coercion; defaulted keys must never be validated or warned about.
+  A throwing restore reports incapable (widget route) instead of leaving a blank
+  header. Re-probed on every session route (`start`/`switch`/`branch`/`tree`) and `/dashboard` show.
 
 ## Important Files
 
@@ -142,18 +139,17 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 
 - Runner: `node:test` `describe`/`it` with `node:assert/strict`. Zero third-party
   test deps. New file `tests/<module>.test.ts` matching a src module name is
-  picked up automatically by the glob.
-- Suite map: `config.test.ts` (27 — inert rule, layers, coercion incl.
-  explicit-empty arrays and degenerate values, tokens),
-  `dashboard.test.ts` (37 — parity, delta rendering, geometry sweep, lone-ESC
+- Suite map: `config.test.ts` (29 — inert rule, layers, coercion incl.
+  explicit-empty arrays and degenerate values, non-object top levels, tokens),
+  `dashboard.test.ts` (46 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
   and wide-glyph truncation, emptied-column frames),
-  `host.test.ts` (30 — probe/fetch/settings-seam classification,
-  detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam),
-  `lifecycle.test.ts` (34 — omp vs pi routing through mock hosts, quiet
-  claim/steady-state/escape-hatch/give-up incl. failure paths and non-TUI
+  `host.test.ts` (36 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
+  detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam),
+  `lifecycle.test.ts` (41 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
+  claim/steady-state/escape-hatch/give-up incl. failure paths (`get` throw) and non-TUI
   toggles),
   `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
-  write-failure marker retention). Total 136.
+  write-failure marker retention). Total 160.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

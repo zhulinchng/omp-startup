@@ -126,7 +126,7 @@ describe("lifecycle: registration contract (both hosts)", () => {
 	it("subscribes to the shared event surface", () => {
 		const mock = makeMockApi();
 		ompStartup(mock.api);
-		for (const event of ["session_start", "before_agent_start"]) {
+		for (const event of ["session_start", "session_switch", "session_branch", "session_tree", "before_agent_start"]) {
 			assert.ok(mock.handlers.has(event), `missing ${event}`);
 		}
 		// Exit-time restores moved to session-start give-up paths: shutdown
@@ -731,5 +731,181 @@ describe("lifecycle: replaceNativeWelcome quiet ownership", () => {
 	it("loadHostSettings degrades to undefined in a host-free environment", async () => {
 		setHostSettingsForTest(null); // clear override → real probing path
 		assert.equal(await loadHostSettings(), undefined);
+	});
+});
+
+describe("lifecycle: session routes (switch/branch/tree)", () => {
+	it("session_switch re-runs the load path and remounts with fresh config", async () => {
+		const project = scratchProject({ greeting: "First!" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			writeFileSync(join(project.cwd, ".omp", "dashboard.json"), JSON.stringify({ greeting: "Second!" }));
+			await h.api.handlerFor("session_switch")({ reason: "resume" }, h.ctx);
+			await drain();
+			await drain();
+			const latest = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(latest);
+			assert.ok(latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n").includes("Second!"));
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("session_branch and session_tree remount like session_start", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			const mounted = h.calls.setWidget.length;
+			assert.equal(mounted, 1);
+			await h.api.handlerFor("session_branch")({ reason: "branch" }, h.ctx);
+			await drain();
+			await h.api.handlerFor("session_tree")({ reason: "tree" }, h.ctx);
+			await drain();
+			const latest = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(latest);
+			assert.ok(latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n").includes("Ahoy!"));
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("a later route clears the previous surface before remounting", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(undefined);
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			const late = makeMockCtx({ headerMode: "sync" });
+			await h.api.handlerFor("session_start")({ reason: "startup" }, { ...late.ctx, cwd: project.cwd });
+			await drain();
+			await drain();
+			assert.ok(late.calls.setWidget.some(c => c.content === undefined), "stale widget cleared");
+			const lastHeader = late.calls.setHeader.at(-1)?.factory as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(lastHeader);
+			assert.ok(lastHeader({ requestRender() {} }, INLINE_THEME).render(100).join("\n").includes("Ahoy!"));
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("a dismissal persists across automatic routes until an explicit show", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			const mounted = h.calls.setWidget.length;
+			await h.beforeAgentStart();
+			assert.equal(h.calls.setWidget.length, mounted + 1); // removal recorded
+			await h.sessionStart(); // revive must not pop the dashboard back
+			await drain();
+			assert.equal(h.calls.setWidget.length, mounted + 1);
+			await h.api.handlerFor("session_switch")({ reason: "resume" }, h.ctx);
+			await drain();
+			assert.equal(h.calls.setWidget.length, mounted + 1);
+			await h.api.commandHandlerNamed("dashboard")("", h.ctx); // explicit re-show
+			await drain();
+			await drain();
+			const latest = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(latest);
+			assert.ok(latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n").includes("Ahoy!"));
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("a throwing settings.get surfaces the advisory without owning anything", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		setHostSettingsForTest({
+			get() {
+				throw new Error("get boom");
+			},
+			set() {},
+			async flush() {},
+		});
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			await drain();
+			await drain();
+			assert.equal(readOwnership(), undefined);
+			const latest = h.calls.setWidget.at(-1)?.content as
+				| ((t: unknown, th: unknown) => { render(w: number): string[] })
+				| undefined;
+			assert.ok(latest);
+			assert.ok(
+				latest({ requestRender() {} }, INLINE_THEME).render(100).join("\n").includes("replaceNativeWelcome"),
+			);
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("toggle outside TUI gives up ownership without mounting", async () => {
+		const project = scratchProject({ greeting: "Ahoy!" });
+		const settings = makeFakeSettings(true);
+		seedOwnership(false, "owned");
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard")("", { ...h.ctx, hasUI: false, mode: "json" });
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.setHeader.length, 0);
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[false],
+			);
+			assert.equal(readOwnership(), undefined);
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
+	});
+
+	it("session_switch without takeover restores and clears like session_start", async () => {
+		const project = scratchProject({ greeting: "Plain", replaceNativeWelcome: false });
+		const settings = makeFakeSettings(true);
+		seedOwnership(false, "owned");
+		setHostSettingsForTest(settings.fake);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.handlerFor("session_switch")({ reason: "resume" }, h.ctx);
+			await drain();
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.deepEqual(
+				settings.calls.filter(c => c.op === "set").map(s => s.value),
+				[false],
+			);
+			assert.equal(readOwnership(), undefined);
+		} finally {
+			dropOwnership();
+			setHostSettingsForTest(null);
+			project.dispose();
+		}
 	});
 });

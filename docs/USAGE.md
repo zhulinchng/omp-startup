@@ -121,10 +121,10 @@ Save as `.omp/dashboard.json` (omp projects), `.pi/dashboard.json`
 | `greeting` | string | `"Welcome back!"` | left-column headline |
 | `left` | block[] | `["greeting","blank","logo","blank","info"]` | block order, left column (whole content when `plain`) |
 | `right` | block[] | `["shortcuts","sessions"]` | block order, right column (`box` layout only) |
-| `info` | string[] | `["{model}","{provider}"]` | token rows under the logo; `""` renders blank |
+| `info` | string[] | `["{model}","{provider}"]` | token rows under the logo; rows expanding to `""` are skipped (use a `blank` block for deliberate gaps) |
 | `shortcuts` | `[key,label][]` | native hints | pairs rendered under the “Tips” header |
 | `sessions` | number 0–12 | `4` | recent-session rows; `0` hides the block |
-| `quote` | string \| string[] | `[]` | stable pick rendered dim/italic below the box; rotates through the list daily |
+| `quote` | string \| string[] | `[]` | stable pick rendered dim/italic below the box; rotates through the list daily; embedded newlines render as separate lines |
 | `dismiss` | boolean | `true` | hide after the first submitted prompt |
 | `command` | string | `"dashboard"` | slash-command name (letters/digits/`_`/`-`) |
 | `replaceNativeWelcome` | boolean | `true` | take over the native welcome slot: Pi swaps its header component in place (the dashboard scrolls away like the native one); on omp the plugin takes ownership of `startup.quiet` across launches so only the dashboard renders at startup (previous value restored automatically if takeover is ever disabled) |
@@ -234,6 +234,6 @@ invalid — it renders no blocks/hints instead of reverting to the defaults.
 ```sh
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
-npm run smoke      # inert/render-delta/probe/token/seam assertions (44 checks)
-npm test           # 136-assertion suite (node:test, zero extra deps)
+npm run smoke      # inert/render-delta/probe/token/seam assertions (51 checks)
+npm test           # 160-assertion suite (node:test, zero extra deps)
 ```

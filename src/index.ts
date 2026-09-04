@@ -36,6 +36,7 @@ import {
 	clearQuietOwnership,
 	fetchBranch,
 	fetchRecentSessions,
+	isOmpFamily,
 	loadHostSettings,
 	probeHeaderSupport,
 	readQuietOwnership,
@@ -73,6 +74,11 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	let headerCapable: boolean | null = null;
 	let mountMode: MountMode = null;
 	let visible = false;
+	/** Set by a `before_agent_start` dismissal; suppresses auto-remount on
+	 *  later session routes (resume/switch/branch) until an explicit
+	 *  `/dashboard` show clears it. Ownership markers are untouched — the
+	 *  next launch must still render a single clean dashboard. */
+	let dismissed = false;
 	/** True when a config file with ≥1 recognized key exists — manual
 	 *  /dashboard shows on unconfigured projects must stay fully read-only. */
 	let configured = false;
@@ -102,7 +108,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	 */
 	async function claimQuietOwnership(): Promise<void> {
 		if (!cfgRef.current.replaceNativeWelcome) return;
-		if (headerCapable || stateRef.current.version === "") return; // omp family only
+		if (headerCapable || !isOmpFamily(stateRef.current.version, stateRef.current.app)) return; // omp family only
 		if (!configured) {
 			// Unconfigured project: the inert contract wins even for explicit
 			// toggles. Stacking is permanent here (nothing will ever own quiet),
@@ -126,7 +132,13 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			stackAdvisory(); // escape hatch active: native welcome is back for good
 			return;
 		}
-		const previous = settings.get("startup.quiet") === true;
+		let previous: boolean;
+		try {
+			previous = settings.get("startup.quiet") === true;
+		} catch {
+			stackAdvisory(); // settings unreadable — same as unavailable, but never write
+			return;
+		}
 		if (previous && !existing) {
 			// quiet was on before we ever engaged — the user's own preference,
 			// not our residue. Ride along visually but never own it, so an
@@ -206,10 +218,11 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			ctx.ui.setWidget(WIDGET_KEY, dash.factory, { placement: "aboveEditor" });
 			mountMode = "widget";
 			// Stacked over a built-in welcome (omp-family host) without takeover:
-			// point at the setting that would replace it. omp exposes VERSION;
-			// upstream Pi does not, and its own quietStartup key differs — so
-			// gate the hint on VERSION.
-			const stackedOmpWelcome = !headerCapable && stateRef.current.version !== "";
+			// point at the setting that would replace it. omp exposes VERSION
+			// (older builds may omit it — then the "omp" binary heuristic in
+			// isOmpFamily still matches); upstream Pi exposes neither, and its
+			// own quietStartup key differs — so gate the hint on omp-family.
+			const stackedOmpWelcome = !headerCapable && isOmpFamily(stateRef.current.version, stateRef.current.app);
 			stateRef.current.hint =
 				stackedOmpWelcome && !cfgRef.current.replaceNativeWelcome ? QUIET_ADVISORY : undefined;
 		}
@@ -229,11 +242,15 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	}
 
 	async function toggle(_args: string, ctx: ExtensionContextSubset): Promise<void> {
-		if (!ctx.hasUI || ctx.mode !== "tui") return; // same surface rule as session_start
+		if (!ctx.hasUI || ctx.mode !== "tui") {
+			void giveUpQuietOwnership();
+			return;
+		} // same surface rule as session routes, plus ownership bookkeeping
 		if (visible) {
 			unmount(ctx);
 			return;
 		}
+		dismissed = false; // explicit show overrides any earlier dismissal
 		// Re-probe every time: hosts may fire session_start more than once
 		// (upstream Pi: once against the runner's no-op UI, then the real TUI).
 		headerCapable = probeHeaderSupport(ctx.ui);
@@ -249,12 +266,7 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		mount(ctx);
 	}
 
-	api.registerCommand(DEFAULT_CONFIG.command, {
-		description: "Toggle the startup dashboard",
-		handler: toggle,
-	});
-
-	api.on("session_start", (_event, ctx) => {
+	function handleSessionRoute(_event: HostEvent, ctx: ExtensionContextSubset): void {
 		if (!ctx.hasUI || ctx.mode !== "tui") {
 			void giveUpQuietOwnership();
 			return;
@@ -279,6 +291,12 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 			return;
 		}
 
+		// A `before_agent_start` dismissal persists across later automatic
+		// routes (revived sessions, switch/branch/tree) until an explicit
+		// `/dashboard` show clears it. Ownership is untouched: the next
+		// launch must still render a single clean dashboard.
+		if (dismissed) return;
+
 		stateRef.current = snapshotInfo(ctx, api);
 		void refreshAsync();
 
@@ -299,15 +317,29 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		// dashboard is manual-only (/dashboard). Any quiet we claimed in an
 		// earlier session is returned now, while the process can still flush.
 		if (cfgRef.current.replaceNativeWelcome) {
+			// A later route may disagree with the earlier probe (Pi runner-era
+			// widget vs real-TUI header, or vice versa): overwriting alone
+			// would leave the other surface installed, so clear first.
+			if (visible) unmount(ctx);
 			mount(ctx);
 		} else {
 			void giveUpQuietOwnership();
 		}
+	}
+
+	api.registerCommand(DEFAULT_CONFIG.command, {
+		description: "Toggle the startup dashboard",
+		handler: toggle,
 	});
+
+	api.on("session_start", handleSessionRoute);
+	api.on("session_switch", handleSessionRoute);
+	api.on("session_branch", handleSessionRoute);
+	api.on("session_tree", handleSessionRoute);
 
 	api.on("before_agent_start", (_event, ctx) => {
 		if (!visible || !cfgRef.current.dismiss) return;
 		unmount(ctx);
+		dismissed = true;
 	});
-
 }

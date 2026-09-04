@@ -411,3 +411,34 @@ describe("expandTokens", () => {
 		assert.match(expandTokens("{time}", snap), /^\d{2}:\d{2}$/);
 	});
 });
+
+describe("config: explicit empties and top-level shape", () => {
+	it("honors explicit empty block lists without warnings", () => {
+		const fx = withDirs({ project: { left: [], right: [] } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.cfg.left, []);
+			assert.deepEqual(loaded.cfg.right, []);
+			assert.ok(loaded.explicitKeys.has("left"));
+			assert.ok(loaded.explicitKeys.has("right"));
+			assert.deepEqual(loaded.warnings, []);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("warns on a non-object top level instead of collapsing to null", () => {
+		const fx = withDirs({});
+		try {
+			mkdirSync(join(fx.cwd, ".omp"), { recursive: true });
+			writeFileSync(join(fx.cwd, ".omp", "dashboard.json"), "[1, 2]");
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded, "existing file keeps the layer set non-inert");
+			assert.deepEqual(loaded.explicitKeys, new Set());
+			assert.ok(loaded.warnings.some(w => w.includes("expected a JSON object")));
+		} finally {
+			fx.dispose();
+		}
+	});
+});

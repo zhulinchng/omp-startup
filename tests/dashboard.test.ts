@@ -340,3 +340,74 @@ describe("makeDashboardComponent", () => {
 	});
 });
 
+
+describe("dashboard: narrow-terminal fit", () => {
+	for (const width of [10, 20, 30]) {
+		it(`keeps every plain-layout line within ${width} cells`, () => {
+			const lines = render({ layout: "plain" }, STATE, width);
+			assert.ok(lines.length > 0);
+			for (const line of lines) {
+				assert.ok(
+					visibleWidth(line) <= width,
+					`overflow at width ${width}: ${JSON.stringify(line)}`,
+				);
+			}
+		});
+	}
+
+	it("locks the sub-minimum floor: widths rendering nothing stay empty", () => {
+		assert.deepEqual(render(undefined, STATE, 5), []);
+		assert.deepEqual(render({ layout: "plain" }, STATE, 5), []);
+		assert.ok(render(undefined, STATE, 6).length > 0);
+	});
+});
+
+describe("dashboard: embedded newlines", () => {
+	it("splits a multiline quote into one widget line per physical line", () => {
+		const lines = render({ quote: ["a\nb\nc"] }, STATE);
+		assert.ok(!lines.some(l => l.includes("\n")), "raw line break leaked into a widget line");
+		const tail = stripAll(lines).slice(-3);
+		assert.ok(tail[0]?.includes("a") && tail[1]?.includes("b") && tail[2]?.includes("c"));
+		for (const line of lines) assert.ok(visibleWidth(line) <= 100);
+	});
+
+	it("splits a multiline hint the same way", () => {
+		const lines = render({}, makeState({ hint: "x\ny" }));
+		assert.ok(!lines.some(l => l.includes("\n")));
+		const tail = stripAll(lines).slice(-2);
+		assert.ok(tail[0]?.includes("x") && tail[1]?.includes("y"));
+	});
+});
+
+describe("dashboard: info emptiness", () => {
+	it("skips rows whose expansion is empty instead of leaving blank gaps", () => {
+		assert.deepEqual(
+			stripAll(render({ info: ["{model}", ""] }, STATE)),
+			stripAll(render({ info: ["{model}"] }, STATE)),
+		);
+	});
+
+	it("drops the info block when every row expands empty", () => {
+		assert.deepEqual(
+			stripAll(render({ info: ["", ""] }, STATE)),
+			stripAll(render({ info: [] }, STATE)),
+		);
+	});
+});
+
+describe("dashboard: sessions height stability", () => {
+	it("keeps the box height independent of the session count", () => {
+		const box = (count: number) =>
+			render(
+				{ sessions: 4 },
+				makeState({
+					sessions: Array.from({ length: count }, (_, i) => ({
+						name: `s${i}`,
+						timeAgo: "1m ago",
+					})),
+				}),
+			);
+		assert.equal(box(0).length, box(2).length);
+		assert.equal(box(2).length, box(4).length);
+	});
+});
