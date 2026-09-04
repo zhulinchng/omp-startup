@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_CONFIG, expandTokens, loadConfig } from "../src/config.ts";
+import { configFileCandidates, DEFAULT_CONFIG, expandTokens, loadConfig } from "../src/config.ts";
 import { withDirs } from "./helpers.ts";
 
 describe("config: inert rule", () => {
@@ -483,6 +483,121 @@ describe("config: explicit empties and top-level shape", () => {
 			assert.ok(loaded, "existing file keeps the layer set non-inert");
 			assert.deepEqual(loaded.explicitKeys, new Set());
 			assert.ok(loaded.warnings.some(w => w.includes("expected a JSON object")));
+		} finally {
+			fx.dispose();
+		}
+	});
+});
+
+describe("config: file provenance", () => {
+	it("reports the three probed paths in check order", () => {
+		const fx = withDirs({});
+		try {
+			assert.deepEqual(configFileCandidates(fx.cwd, fx.home), {
+				projectOmp: join(fx.cwd, ".omp", "dashboard.json"),
+				projectPi: join(fx.cwd, ".pi", "dashboard.json"),
+				user: join(fx.home, ".config", "dashboard", "config.json"),
+			});
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names the project file when only it exists", () => {
+		const fx = withDirs({ project: { greeting: "hi" } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".omp", "dashboard.json") });
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names the user file when only it exists", () => {
+		const fx = withDirs({ user: { greeting: "hi" } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { user: join(fx.home, ".config", "dashboard", "config.json") });
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names both files when both layers exist", () => {
+		const fx = withDirs({ project: { greeting: "hi" }, user: { title: "t" } });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, {
+				project: join(fx.cwd, ".omp", "dashboard.json"),
+				user: join(fx.home, ".config", "dashboard", "config.json"),
+			});
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names the .pi fallback when no .omp file exists", () => {
+		const fx = withDirs({ project: { greeting: "hi" }, projectSubdir: ".pi" });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".pi", "dashboard.json") });
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names only the shadowing .omp file when both project dirs exist", () => {
+		const fx = withDirs({ project: { greeting: "hi" } });
+		try {
+			mkdirSync(join(fx.cwd, ".pi"), { recursive: true });
+			writeFileSync(join(fx.cwd, ".pi", "dashboard.json"), JSON.stringify({ title: "shadowed" }));
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".omp", "dashboard.json") });
+			assert.equal(loaded.cfg.title, DEFAULT_CONFIG.title);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("still names a project file with broken JSON", () => {
+		const fx = withDirs({});
+		try {
+			mkdirSync(join(fx.cwd, ".omp"), { recursive: true });
+			writeFileSync(join(fx.cwd, ".omp", "dashboard.json"), "{oops");
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".omp", "dashboard.json") });
+			assert.equal(loaded.explicitKeys.size, 0);
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("still names a project path that is a directory", () => {
+		const fx = withDirs({});
+		try {
+			mkdirSync(join(fx.cwd, ".omp", "dashboard.json"), { recursive: true });
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".omp", "dashboard.json") });
+			assert.ok(loaded.warnings.some(w => w.includes("invalid JSON")));
+		} finally {
+			fx.dispose();
+		}
+	});
+
+	it("names an existing-but-empty project file", () => {
+		const fx = withDirs({ project: {} });
+		try {
+			const loaded = loadConfig(fx.cwd, fx.home);
+			assert.ok(loaded);
+			assert.deepEqual(loaded.files, { project: join(fx.cwd, ".omp", "dashboard.json") });
+			assert.equal(loaded.explicitKeys.size, 0);
 		} finally {
 			fx.dispose();
 		}

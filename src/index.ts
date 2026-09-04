@@ -1,9 +1,9 @@
 /**
  * omp-startup entry point.
  *
- * Lifecycle:
- *   - Registered `/dashboard` command always exists (invoking it is an explicit
- *     user action, allowed even without any config file).
+ *   - Registered `/dashboard` and `/dashboard-config` commands always exist
+ *     (invoking either is an explicit user action, allowed even without any
+ *     config file). `/dashboard-config` reports which config files are loaded.
  *   - `session_start`: load layered config; if nothing is configured anywhere,
  *     do NOTHING — native welcome screens stay exactly as without the plugin.
  *     Otherwise take over the native welcome slot (default,
@@ -31,7 +31,7 @@
 
 import { homedir } from "node:os";
 import { makeDashboardComponent } from "./dashboard.ts";
-import { DEFAULT_CONFIG, loadConfig, type DashboardConfig, type LoadedConfig } from "./config.ts";
+import { configFileCandidates, DEFAULT_CONFIG, loadConfig, type DashboardConfig, type LoadedConfig } from "./config.ts";
 import {
 	clearQuietOwnership,
 	detectUser,
@@ -361,6 +361,37 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 		mount(ctx);
 	}
 
+	/**
+	 * `/dashboard-config`: report which config files feed the merge. Read-only
+	 * by construction — loads and describes, never mounts, warns, or writes.
+	 * Warnings are deliberately NOT re-emitted here: every session route
+	 * already surfaced them, and the command always runs after session_start.
+	 */
+	async function showConfigPath(_args: string, ctx: ExtensionContextSubset): Promise<void> {
+		// Same surface rule as the toggle: outside the TUI, notify is a
+		// verified no-op (runner/session stubs) or an unknown sink — stay silent.
+		if (!ctx.hasUI || ctx.mode !== "tui") return;
+		const home = homedir();
+		const loaded = loadConfig(ctx.cwd, home);
+		if (!loaded) {
+			const candidates = configFileCandidates(ctx.cwd, home);
+			ctx.ui.notify(
+				`omp-startup: no config file found (checked ${candidates.projectOmp}, ${candidates.projectPi}, ${candidates.user})`,
+				"info",
+			);
+			return;
+		}
+		const sources: string[] = [];
+		if (loaded.files.project !== undefined) sources.push(`project: ${loaded.files.project}`);
+		if (loaded.files.user !== undefined) sources.push(`user: ${loaded.files.user}`);
+		const keyCount = loaded.explicitKeys.size;
+		const detail =
+			keyCount > 0
+				? `${keyCount} recognized key${keyCount === 1 ? "" : "s"}${sources.length > 1 ? "; project wins per key" : ""}`
+				: "no recognized keys — dashboard stays inert";
+		ctx.ui.notify(`omp-startup config loaded from ${sources.join(" + ")} (${detail})`, "info");
+	}
+
 	function handleSessionRoute(_event: HostEvent, ctx: ExtensionContextSubset): void {
 		const loaded = prepareRoute(ctx);
 		if (loaded === undefined) return;
@@ -411,6 +442,13 @@ export default function ompStartup(api: OmpStartupExtensionAPI): void {
 	api.registerCommand(DEFAULT_CONFIG.command, {
 		description: "Toggle the startup dashboard",
 		handler: toggle,
+	});
+
+	// Fixed name by design: the `command` config key renames only the toggle
+	// above, so this diagnostic is always where /help says it is.
+	api.registerCommand("dashboard-config", {
+		description: "Show which omp-startup config files are loaded",
+		handler: showConfigPath,
 	});
 
 	api.on("session_start", handleSessionRoute);

@@ -115,12 +115,14 @@ function boot(options: { headerMode: "noop" | "sync" | "throw"; version?: string
 }
 
 describe("lifecycle: registration contract (both hosts)", () => {
-	it("registers the dashboard command at load time", () => {
+	it("registers the dashboard commands at load time", () => {
 		const mock = makeMockApi();
 		ompStartup(mock.api);
-		assert.equal(mock.commands.length, 1);
+		assert.equal(mock.commands.length, 2);
 		assert.equal(mock.commands[0]?.name, "dashboard");
 		assert.equal(mock.commands[0]?.description, "Toggle the startup dashboard");
+		assert.equal(mock.commands[1]?.name, "dashboard-config");
+		assert.equal(mock.commands[1]?.description, "Show which omp-startup config files are loaded");
 	});
 
 	it("subscribes to the shared event surface", () => {
@@ -1057,6 +1059,210 @@ describe("lifecycle: concurrent async refresh", () => {
 			project.dispose();
 			dropOwnership();
 			setHostSettingsForTest(null);
+		}
+	});
+});
+
+describe("lifecycle: dashboard-config command", () => {
+	function seedUserConfig(config: Record<string, unknown>): void {
+		mkdirSync(join(fakeHome, ".config", "dashboard"), { recursive: true });
+		writeFileSync(join(fakeHome, ".config", "dashboard", "config.json"), JSON.stringify(config));
+	}
+
+	function dropUserConfig(): void {
+		rmSync(join(fakeHome, ".config", "dashboard", "config.json"), { force: true });
+	}
+
+	function seedPiProject(cwd: string, config: Record<string, unknown>): void {
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "dashboard.json"), JSON.stringify(config));
+	}
+
+	function lastNotify(calls: RecordedUiCalls): { message: string; type: string } {
+		assert.equal(calls.notify.length, 1);
+		const note = calls.notify[0];
+		assert.ok(note);
+		return note;
+	}
+
+	it("reports the project file without mounting anything", async () => {
+		const project = scratchProject({ greeting: "hi" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.equal(note.type, "info");
+			assert.ok(note.message.includes(`project: ${join(project.cwd, ".omp", "dashboard.json")}`));
+			assert.ok(note.message.includes("1 recognized key)"));
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.setHeader.length, 0);
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("reports the user file when only it exists", async () => {
+		const project = scratchProject(undefined);
+		seedUserConfig({ title: "t" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(`user: ${join(fakeHome, ".config", "dashboard", "config.json")}`));
+			assert.ok(!note.message.includes("project:"));
+		} finally {
+			dropUserConfig();
+			project.dispose();
+		}
+	});
+
+	it("reports both layers with precedence when both exist", async () => {
+		const project = scratchProject({ greeting: "hi", title: "p" });
+		seedUserConfig({ quote: ["q"] });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(`project: ${join(project.cwd, ".omp", "dashboard.json")}`));
+			assert.ok(note.message.includes(`user: ${join(fakeHome, ".config", "dashboard", "config.json")}`));
+			assert.ok(note.message.includes("3 recognized keys; project wins per key"));
+		} finally {
+			dropUserConfig();
+			project.dispose();
+		}
+	});
+
+	it("reports the .pi fallback path", async () => {
+		const project = scratchProject(undefined);
+		seedPiProject(project.cwd, { greeting: "hi" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(`project: ${join(project.cwd, ".pi", "dashboard.json")}`));
+			assert.ok(!note.message.includes(".omp"));
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("names only the shadowing .omp file when both project dirs exist", async () => {
+		const project = scratchProject({ greeting: "hi" });
+		seedPiProject(project.cwd, { title: "shadowed" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+			assert.ok(!note.message.includes(join(project.cwd, ".pi", "dashboard.json")));
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("lists every checked path when no config file exists", async () => {
+		const project = scratchProject(undefined);
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes("no config file found"));
+			assert.ok(note.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+			assert.ok(note.message.includes(join(project.cwd, ".pi", "dashboard.json")));
+			assert.ok(note.message.includes(join(fakeHome, ".config", "dashboard", "config.json")));
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.setHeader.length, 0);
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("marks existing-but-keyless files inert without re-emitting warnings", async () => {
+		const project = scratchProject({ bogus: 1 });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			// Exactly one toast: the path report. The unknown-key warning stays
+			// a session-route concern (already notified at session_start).
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+			assert.ok(note.message.includes("no recognized keys — dashboard stays inert"));
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("still names a project file with broken JSON", async () => {
+		const project = scratchProject(undefined);
+		mkdirSync(join(project.cwd, ".omp"), { recursive: true });
+		writeFileSync(join(project.cwd, ".omp", "dashboard.json"), "{oops");
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+			assert.ok(note.message.includes("stays inert"));
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("ignores trailing args", async () => {
+		const project = scratchProject({ greeting: "hi" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("verbose --json", h.ctx);
+			const note = lastNotify(h.calls);
+			assert.ok(note.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("stays silent outside the TUI", async () => {
+		const project = scratchProject({ greeting: "hi" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.api.commandHandlerNamed("dashboard-config")("", { ...h.ctx, mode: "json" });
+			await h.api.commandHandlerNamed("dashboard-config")("", { ...h.ctx, hasUI: false });
+			assert.equal(h.calls.notify.length, 0);
+			assert.equal(h.calls.setWidget.length, 0);
+			assert.equal(h.calls.setHeader.length, 0);
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("touches no surface when run over a mounted dashboard", async () => {
+		const project = scratchProject({ greeting: "hi" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await drain();
+			const widgets = h.calls.setWidget.length;
+			const headers = h.calls.setHeader.length;
+			const notes = h.calls.notify.length;
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			assert.equal(h.calls.setWidget.length, widgets);
+			assert.equal(h.calls.setHeader.length, headers);
+			assert.equal(h.calls.notify.length, notes + 1);
+		} finally {
+			project.dispose();
+		}
+	});
+
+	it("survives a custom toggle rename unchanged", async () => {
+		const project = scratchProject({ command: "mydash" });
+		try {
+			const h = boot({ headerMode: "noop", version: "18.0.1", cwd: project.cwd });
+			await h.sessionStart();
+			await h.api.commandHandlerNamed("dashboard-config")("", h.ctx);
+			const note = h.calls.notify.at(-1);
+			assert.ok(note?.message.includes(join(project.cwd, ".omp", "dashboard.json")));
+			// The rename still mints its toggle alias; the diagnostic keeps its name.
+			await h.api.commandHandlerNamed("mydash")("", h.ctx);
+		} finally {
+			project.dispose();
 		}
 	});
 });

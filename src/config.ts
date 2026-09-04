@@ -85,6 +85,24 @@ export interface LoadedConfig {
 	cfg: DashboardConfig;
 	explicitKeys: Set<string>;
 	warnings: string[];
+	/** Config files that exist and feed the merge, by layer. Unreadable or
+	 *  invalid files count — they contribute warnings, never inertness. */
+	files: { project?: string; user?: string };
+}
+
+/** The three probed config paths in check order — single source of truth shared by loadConfig and the config-path command. */
+export interface ConfigFileCandidates {
+	projectOmp: string;
+	projectPi: string;
+	user: string;
+}
+
+export function configFileCandidates(cwd: string, home: string): ConfigFileCandidates {
+	return {
+		projectOmp: join(cwd, ".omp", "dashboard.json"),
+		projectPi: join(cwd, ".pi", "dashboard.json"),
+		user: join(home, ".config", "dashboard", "config.json"),
+	};
 }
 
 export interface TokenSnapshot {
@@ -251,14 +269,14 @@ function coerceCommand(file: string, value: unknown, fallback: string, warnings:
  */
 export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 	const warnings: string[] = [];
+	const candidates = configFileCandidates(cwd, home);
 
 	// Project layer: first existing file wins so .omp and .pi users don't double-apply.
 	// The fallback is read lazily — when .omp exists, .pi is shadowed entirely
 	// (not even warnings), saving a stat+read+parse on every session route.
-	const ompLayer = readLayer(join(cwd, ".omp", "dashboard.json"), warnings);
-	const project =
-		ompLayer.data !== undefined ? ompLayer : readLayer(join(cwd, ".pi", "dashboard.json"), warnings);
-	const user = readLayer(join(home, ".config", "dashboard", "config.json"), warnings);
+	const ompLayer = readLayer(candidates.projectOmp, warnings);
+	const project = ompLayer.data !== undefined ? ompLayer : readLayer(candidates.projectPi, warnings);
+	const user = readLayer(candidates.user, warnings);
 
 	const layers = [user, project].filter((layer): layer is RawLayer & { data: Record<string, unknown> } =>
 		layer !== undefined && layer.data !== undefined,
@@ -336,7 +354,15 @@ export function loadConfig(cwd: string, home: string): LoadedConfig | null {
 		replaceNativeWelcome: pick("replaceNativeWelcome"),
 	};
 
-	return { cfg, explicitKeys, warnings };
+	return {
+		cfg,
+		explicitKeys,
+		warnings,
+		files: {
+			...(project.data !== undefined ? { project: project.file } : {}),
+			...(user.data !== undefined ? { user: user.file } : {}),
+		},
+	};
 }
 
 function twoDigits(n: number): string {

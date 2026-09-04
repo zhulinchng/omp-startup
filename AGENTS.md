@@ -29,8 +29,8 @@ Core contract (user-mandated, enforced by tests):
 
 | Module | Responsibility |
 |---|---|
-| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` unconditionally; subscribes `session_start` / `session_switch` / `session_branch` / `session_tree` (one shared route handler) plus `before_agent_start`; owns mount state (`headerCapable`, `mountMode`, `visible`, `dismissed`) plus the quiet-ownership flow (claimQuietOwnership/giveUpQuietOwnership; state persists in a marker file, not memory). |
-| `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` — `null` only when **no config file exists anywhere**; files that exist but carry nothing recognized return defaults with empty `explicitKeys` plus warnings. Also `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
+| `src/index.ts` | Sole entry. Default export `ompStartup(api: OmpStartupExtensionAPI)`. Registers `/dashboard` + `/dashboard-config` unconditionally (fixed names; only the toggle honors the `command` rename as a best-effort alias); subscribes `session_start` / `session_switch` / `session_branch` / `session_tree` (one shared route handler) plus `before_agent_start`; owns mount state (`headerCapable`, `mountMode`, `visible`, `dismissed`) plus the quiet-ownership flow (claimQuietOwnership/giveUpQuietOwnership; state persists in a marker file, not memory). `/dashboard-config` is read-only: one `info` toast naming the loaded `files` (or every checked candidate path), silent outside the TUI. |
+| `src/config.ts` | Layered JSON loader: project `<cwd>/.omp/dashboard.json` else `.pi/` (first found) → user `~/.config/dashboard/config.json` → `DEFAULT_CONFIG`. Exports `loadConfig(cwd, home): LoadedConfig \| null` — `null` only when **no config file exists anywhere**; files that exist but carry nothing recognized return defaults with empty `explicitKeys` plus warnings. `LoadedConfig.files` names the existing layers (`{project?, user?}`); `configFileCandidates(cwd, home)` is the single source of truth for the three probed paths. Also `expandTokens(text, snap)`. Per-key coercers return the default + warning for invalid values **only when the key is present in a file**. |
 | `src/host.ts` | Host abstraction, failure-tolerant: `probeHeaderSupport(ui)` (behavioral capability probe; a throwing restore routes to the widget instead of leaving a blank header), `isOmpFamily(version, app)` (VERSION present, or `omp` binary when older builds omit it), `snapshotInfo(ctx, api)`, `fetchBranch(api)`, `fetchRecentSessions(cwd, count)`, `mapSessionInfos` (nameless pathless rows degrade to `untitled`), `loadHostSettings()` (feature-detected host settings singleton incl. flush passthrough; `setHostSettingsForTest` seam), quiet-ownership marker helpers (`read/write/clearQuietOwnership`), `detectAppName()`, constant `WIDGET_KEY = "omp-startup"`. |
 | `src/dashboard.ts` | Pure renderer, no host imports: `renderDashboard(cfg, state, theme, termWidth)`, `makeDashboardComponent(stateRef, cfgRef)` → `{factory, refresh}`. ANSI-safe width math, 5-stop diagonal gradient, box/plain assembly. Plain right-column rows truncate like box cells; quote/hint split on embedded newlines; empty `info` expansions are skipped (unlike `blank` blocks). |
 | `types.d.ts` | Ambient declarations for the used host-API subset (`OmpStartupExtensionAPI`, `ExtensionUiSubset`, …). Typecheck-only; consumed at runtime by nothing. |
@@ -78,7 +78,7 @@ it. npm uninstalls additionally run `scripts/uninstall-reset.js`
 ```sh
 npm install         # devDeps only: typescript ^5.6, @types/node ^24
 npm run typecheck   # tsc --noEmit over src/, scripts/, tests/ — must be clean
-npm test            # node --test tests/*.test.ts — expect 178 passing
+npm test            # node --test tests/*.test.ts — expect 199 passing
 npm run smoke       # node scripts/smoke.ts — expect 53 "ok" lines, exit 0
 ```
 
@@ -140,20 +140,20 @@ verification order after changes: `typecheck && npm test && npm run smoke`.
 
 - Runner: `node:test` `describe`/`it` with `node:assert/strict`. Zero third-party
   test deps. New file `tests/<module>.test.ts` matching a src module name is
-- Suite map: `config.test.ts` (33 — inert rule, layers, coercion incl.
+- Suite map: `config.test.ts` (42 — inert rule, layers, coercion incl.
   explicit-empty arrays and degenerate values, non-object top levels, tokens,
-  shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning),
+  shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning, file provenance incl. shadowed/invalid/directory layers),
   `dashboard.test.ts` (53 — parity, delta rendering, geometry sweep incl. narrow-terminal fit and the sub-minimum floor, content-fit left column and
   centerText exact-fit, multiline quote/hint splitting, info-emptiness skips, sessions height stability, lone-ESC
   and wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date),
   `host.test.ts` (37 — probe/fetch/settings-seam classification incl. restore-throw routing and the omp-family predicate,
   detached-HEAD fetch, session-shape drift incl. pathless rows and future dates, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset),
-  `lifecycle.test.ts` (47 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
+  `lifecycle.test.ts` (59 — omp vs pi routing through mock hosts incl. switch/branch/tree routes, route-change clearing, dismiss persistence, quiet
   claim/steady-state/escape-hatch/give-up incl. failure paths (`get` throw) and non-TUI
   toggles, concurrent-refresh single repaint and branch landing, gated async
-  fetches, conditional repaint, primed first-paint advisory),
+  fetches, conditional repaint, primed first-paint advisory, dashboard-config path reporting incl. layered/shadowed/absent/broken layers, arg tolerance, non-TUI silence, mount purity, toggle-rename survival),
   `uninstall-reset.test.ts` (8 — postuninstall restore outcomes incl.
-  write-failure marker retention). Total 178.
+  write-failure marker retention). Total 199.
 - Fixtures from `tests/helpers.ts`: `makeState(overrides?)` snapshot builder,
   `render(cfgOverrides, state, width?)` with `PLAIN_THEME` (identity theme),
   `withDirs({project?, projectSubdir?, user?})` scratch dirs with `dispose()`,

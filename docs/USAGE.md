@@ -151,6 +151,9 @@ through untouched.
 
 - `/dashboard` — toggles the dashboard at any time, config or not. With no
   config it shows the native-equivalent defaults.
+- `/dashboard-config` — reports which config files are loaded (project path,
+  user path, or every path checked when none exists). Read-only; works with
+  no config, and keeps its name when the `command` key renames `/dashboard`.
 - On first submitted prompt the dashboard hides (`dismiss: true`). Run
   `/dashboard` to bring it back; edit `dismiss` to keep it pinned.
 
@@ -235,5 +238,5 @@ invalid — it renders no blocks/hints instead of reverting to the defaults.
 npm install        # dev-only tooling (typescript, @types/node)
 npm run typecheck  # strict tsc over src/, scripts/, tests/
 npm run smoke      # inert/render-delta/probe/token/seam assertions (53 checks)
-npm test           # 178-assertion suite (node:test, zero extra deps)
+npm test           # 199-assertion suite (node:test, zero extra deps)
 ```

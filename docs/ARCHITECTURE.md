@@ -60,12 +60,16 @@ flowchart LR
 ```
 
 - `src/index.ts` — default-exported factory `(api: OmpStartupExtensionAPI) => void`.
-  Registers `/dashboard`, subscribes to `session_start`, `session_switch`,
+  Registers `/dashboard` (toggle) and `/dashboard-config` (read-only path
+  report via one `info` toast; fixed name, silent outside the TUI),
+  subscribes to `session_start`, `session_switch`,
   `session_branch`, `session_tree` (one shared route handler) and
   `before_agent_start`, owns mount state (`headerCapable`, `mountMode`,
   `visible`, `dismissed`) plus the quiet-ownership claim/give-up flow.
 - `src/config.ts` — layered JSON loader with explicit-key tracking (drives the
-  inert rule), per-key coercion with warnings, token expansion.
+  inert rule), per-key coercion with warnings, token expansion. `LoadedConfig.files`
+  names the existing layers; `configFileCandidates()` is the single source of
+  truth for the three probed paths (shared with `/dashboard-config`).
 - `src/host.ts` — everything host-shaped: capability probe, info snapshot,
   git branch fetch, recent-sessions fetch (dynamic import of the host package),
   `loadHostSettings()` (feature-detected settings singleton with flush
@@ -166,8 +170,11 @@ stateDiagram-v2
 - `/dashboard` is always registered, even with no config file — invoking it is
   an explicit user action, and unconfigured invocation shows the
   native-equivalent defaults.
+- `/dashboard-config` is always registered alongside it and reports the loaded
+  `files` (or every checked candidate path when `loadConfig` is null). It never
+  mounts, warns, or writes, and ignores its args.
 - If the config renames `command`, the alias is registered best-effort during
-  `session_start`; the default `/dashboard` remains.
+  `session_start`; the default `/dashboard` and `/dashboard-config` remain.
 - Late data (git branch, recent sessions) mutates the shared state ref and
   calls `refresh()` → the component's captured `tui.requestRender()`.
 
@@ -306,7 +313,7 @@ Documented deliberately; none affect the inert rule.
 
 | Layer | Mechanism |
 |---|---|
-| Unit | `node --test tests/*.test.ts` — 178 assertions: inert rule, layers, coercion incl. explicit-empty arrays and degenerate values, tokens, shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning, single-syscall layer reads, geometry invariants incl. content-fit left column and centerText exact-fit, lone-ESC/wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured read-only toggles, concurrent-refresh single repaint, gated async fetches, conditional repaint, primed first-paint advisory |
+| Unit | `node --test tests/*.test.ts` — 199 assertions: inert rule, layers, coercion incl. explicit-empty arrays and degenerate values, tokens, shadowed-project silence, injected clock, untraversable-path silence, EISDIR warning, single-syscall layer reads, file provenance incl. shadowed/invalid/directory layers, geometry invariants incl. content-fit left column and centerText exact-fit, lone-ESC/wide-glyph truncation, emptied-column frames, gradient-memo stability, frame-clock date, delta rendering, probe classification, detached-HEAD fetch, ownership-marker round-trip incl. boolean write seam, settings-cache/seam reset, lifecycle routing against omp-style and pi-style mocks, non-TUI guards, quiet claim/steady-state/escape-hatch/give-up incl. flush-failure, marker-loss rollback and no-settings honesty, unconfigured/manual flows, dashboard-config path reporting incl. layered/shadowed/absent/broken layers, arg tolerance and toggle-rename survival, uninstall reset incl. write-failure marker retention |
 | Smoke | `scripts/smoke.ts` — 53 host-free assertions (inert rule, render delta, probe routing, tokens, snapshot info, quiet-ownership seam, gradient-memo repaint, injected clock) |
 | Types | `tsc --noEmit` strict, including `tests/` |
 | CI | GitHub Actions (`.github/workflows/ci.yml`): same gates on Node 24 + 26 for every push/PR; `publish-gpr.yml` re-runs the gates in a blocking job before mirroring a release to GitHub Packages as `@zhulinchng/omp-startup` |
