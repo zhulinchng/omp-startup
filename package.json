@@ -1,6 +1,6 @@
 {
 	"name": "omp-startup",
-	"version": "0.1.10",
+	"version": "0.1.11",
 	"description": "Custom startup dashboard for omp and Pi coding agents.",
 	"author": "Zhu Lin <zhulin@czl.my>",
 	"repository": {
